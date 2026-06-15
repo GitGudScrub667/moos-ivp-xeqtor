@@ -173,16 +173,22 @@ void Odometry::registerVariables()
 //------------------------------------------------------------
 // Procedure: buildReport()
 
-bool Odometry::buildReport() 
+bool Odometry::buildReport()
 {
-  m_msgs << "============================================" << endl;
-  m_msgs << "File:                                       " << endl;
+  m_msgs << "Odometry Report                             " << endl;
   m_msgs << "============================================" << endl;
 
-  ACTable actab(4);
-  actab << "Alpha | Bravo | Charlie | Delta";
+  if(!m_nav_received) {
+    m_msgs << "Awaiting first NAV_X/NAV_Y reading..." << endl;
+    return(true);
+  }
+
+  ACTable actab(2);
+  actab << "Quantity | Value";
   actab.addHeaderLines();
-  actab << "one" << "two" << "three" << "four";
+  actab << "Current Position:" << "(" + doubleToStringX(m_current_x,2) + ", " +
+                                        doubleToStringX(m_current_y,2) + ")";
+  actab << "Total Distance:"   << doubleToStringX(m_total_distance,2) + " m";
   m_msgs << actab.getFormattedString();
 
   return(true);
