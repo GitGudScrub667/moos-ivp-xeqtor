@@ -31,6 +31,15 @@ class Odometry : public AppCastingMOOSApp
  private: // Configuration variables
 
  private: // State variables
+   bool   m_first_reading;   // true until the first NAV pair is captured
+   bool   m_nav_received;    // true once any NAV_X/NAV_Y has arrived
+
+   double m_current_x;       // most recent NAV_X
+   double m_current_y;       // most recent NAV_Y
+   double m_previous_x;      // NAV_X at the previous Iterate
+   double m_previous_y;      // NAV_Y at the previous Iterate
+
+   double m_total_distance;  // accumulated path length, published as ODOMETRY_DIST
 };
 
 #endif 

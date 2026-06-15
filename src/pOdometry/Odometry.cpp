@@ -6,6 +6,7 @@
 /************************************************************/
 
 #include <iterator>
+#include <cmath>
 #include "MBUtils.h"
 #include "ACTable.h"
 #include "Odometry.h"
@@ -17,6 +18,16 @@ using namespace std;
 
 Odometry::Odometry()
 {
+  // State variables
+  m_first_reading  = true;
+  m_nav_received   = false;
+
+  m_current_x      = 0;
+  m_current_y      = 0;
+  m_previous_x     = 0;
+  m_previous_y     = 0;
+
+  m_total_distance = 0;
 }
 
 //---------------------------------------------------------
@@ -48,8 +59,14 @@ bool Odometry::OnNewMail(MOOSMSG_LIST &NewMail)
     bool   mstr  = msg.IsString();
 #endif
 
-     if(key == "FOO") 
-       cout << "great!";
+     if(key == "NAV_X") {
+       m_current_x    = msg.GetDouble();
+       m_nav_received = true;
+     }
+     else if(key == "NAV_Y") {
+       m_current_y    = msg.GetDouble();
+       m_nav_received = true;
+     }
 
      else if(key != "APPCAST_REQ") // handled by AppCastingMOOSApp
        reportRunWarning("Unhandled Mail: " + key);
@@ -74,7 +91,33 @@ bool Odometry::OnConnectToServer()
 bool Odometry::Iterate()
 {
   AppCastingMOOSApp::Iterate();
-  // Do your thing here!
+
+  // Can't measure anything until the first NAV position has arrived.
+  if(m_nav_received) {
+
+    // On the very first reading, just seed the "previous" position.
+    // There is no prior point yet, so no leg distance is added.
+    if(m_first_reading) {
+      m_previous_x    = m_current_x;
+      m_previous_y    = m_current_y;
+      m_first_reading = false;
+    }
+    // Otherwise add the length of the leg from the previous position
+    // (last Iterate) to the current position to the running total.
+    else {
+      double dx        = m_current_x - m_previous_x;
+      double dy        = m_current_y - m_previous_y;
+      double leg_dist  = hypot(dx, dy);
+
+      m_total_distance += leg_dist;
+
+      m_previous_x = m_current_x;
+      m_previous_y = m_current_y;
+    }
+
+    Notify("ODOMETRY_DIST", m_total_distance);
+  }
+
   AppCastingMOOSApp::PostReport();
   return(true);
 }
@@ -122,7 +165,8 @@ bool Odometry::OnStartUp()
 void Odometry::registerVariables()
 {
   AppCastingMOOSApp::RegisterVariables();
-  // Register("FOOBAR", 0);
+  Register("NAV_X", 0);
+  Register("NAV_Y", 0);
 }
 
 
