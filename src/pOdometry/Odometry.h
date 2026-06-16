@@ -29,6 +29,8 @@ class Odometry : public AppCastingMOOSApp
    void registerVariables();
 
  private: // Configuration variables
+   double m_depth_thresh;    // only count "at-depth" distance when
+                             // NAV_DEPTH > m_depth_thresh (default 0)
 
  private: // State variables
    bool   m_first_reading;   // true until the first NAV pair is captured
@@ -36,10 +38,13 @@ class Odometry : public AppCastingMOOSApp
 
    double m_current_x;       // most recent NAV_X
    double m_current_y;       // most recent NAV_Y
+   double m_current_depth;   // most recent NAV_DEPTH
    double m_previous_x;      // NAV_X at the previous Iterate
    double m_previous_y;      // NAV_Y at the previous Iterate
 
    double m_total_distance;  // accumulated path length, published as ODOMETRY_DIST
+   double m_depth_distance;  // path length while NAV_DEPTH > depth_thresh,
+                             // published as ODOMETRY_DIST_AT_DEPTH
 };
 
 #endif 

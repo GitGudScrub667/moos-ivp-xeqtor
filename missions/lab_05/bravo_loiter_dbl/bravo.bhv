@@ -1,0 +1,82 @@
+//--------    FILE: bravo.bhv  (Lab 5, Assignment 4 - Bravo Double Loiter)  -----
+
+initialize   DEPLOY = false
+initialize   RETURN = false
+initialize   LOITER_REGION = west       // west loiter is active first
+
+//----------------------------------------------
+// WEST loiter. Active when LOITER_REGION=west. After 150s of *running*
+// time (duration_idle_decay=false pauses the clock while idle) it
+// completes and its endflag sets LOITER_REGION=east. That single flag
+// both (a) triggers loiter_east and (b) negates this behavior's own
+// condition. perpetual=true lets it re-run when its turn comes again.
+Behavior = BHV_Loiter
+{
+  name        = loiter_west
+  pwt         = 100
+  condition   = DEPLOY = true
+  condition   = RETURN = false
+  condition   = LOITER_REGION = west
+
+  duration           = 150
+  duration_idle_decay = false
+  perpetual          = true
+  endflag            = LOITER_REGION = east
+
+         speed = 2.5
+     clockwise = false
+        radius = 8.0
+     nm_radius = 15.0
+       polygon = format=radial, x=100, y=-75, radius=30, pts=8, snap=1, label=loiter_west
+
+  visual_hints = nextpt_color=yellow, nextpt_lcolor=gray70
+  visual_hints = edge_color=light_blue, vertex_color=dodger_blue
+  visual_hints = edge_size=1, vertex_size=3
+}
+
+//----------------------------------------------
+// EAST loiter. Mutually exclusive with the west loiter via the shared
+// LOITER_REGION mode variable. Not active on initial deploy.
+Behavior = BHV_Loiter
+{
+  name        = loiter_east
+  pwt         = 100
+  condition   = DEPLOY = true
+  condition   = RETURN = false
+  condition   = LOITER_REGION = east
+
+  duration           = 150
+  duration_idle_decay = false
+  perpetual          = true
+  endflag            = LOITER_REGION = west
+
+         speed = 2.5
+     clockwise = false
+        radius = 8.0
+     nm_radius = 15.0
+       polygon = format=radial, x=160, y=-50, radius=20, pts=8, snap=1, label=loiter_east
+
+  visual_hints = nextpt_color=yellow, nextpt_lcolor=gray70
+  visual_hints = edge_color=pink, vertex_color=hotpink
+  visual_hints = edge_size=1, vertex_size=3
+}
+
+//----------------------------------------------
+// Return to launch (0,0) only when the user hits the RETURN button.
+Behavior = BHV_Waypoint
+{
+  name       = waypt_return
+  pwt        = 100
+  condition  = RETURN = true
+  condition  = DEPLOY = true
+  perpetual  = true
+  updates    = RETURN_UPDATE
+  endflag    = RETURN  = false
+  endflag    = DEPLOY  = false
+  endflag    = MISSION = complete
+
+           speed = 2.0
+  capture_radius = 2.0
+     slip_radius = 8.0
+          points = 0,0
+}

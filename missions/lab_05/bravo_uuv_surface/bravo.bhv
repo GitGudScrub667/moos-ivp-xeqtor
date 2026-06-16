@@ -1,0 +1,169 @@
+//--------    FILE: bravo.bhv  (Lab 5, Assignment 6 - Bravo UUV Surface)  --------
+//
+// State machine via the SURFACE flag:
+//   SURFACE=false : dive/loiter normally; timer_dive counts 200s of
+//                   submerged time, then sets SURFACE=true.
+//   SURFACE=true  : ascend to depth 0 (const_dep_surface) and stop
+//                   (const_spd_stop); timer_surface counts 60s, then
+//                   sets SURFACE=false to dive and resume.
+
+initialize   DEPLOY = false
+initialize   RETURN = false
+initialize   LOITER_REGION = west
+initialize   SURFACE = false
+
+//----------------------------------------------
+// WEST loiter (depth 30m). Suppressed while surfacing.
+Behavior = BHV_Loiter
+{
+  name        = loiter_west
+  pwt         = 100
+  condition   = DEPLOY = true
+  condition   = RETURN = false
+  condition   = SURFACE = false
+  condition   = LOITER_REGION = west
+
+  duration            = 150
+  duration_idle_decay = false
+  perpetual           = true
+  endflag             = LOITER_REGION = east
+
+         speed = 2.5
+     clockwise = false
+        radius = 8.0
+     nm_radius = 15.0
+       polygon = format=radial, x=100, y=-75, radius=30, pts=8, snap=1, label=loiter_west
+
+  visual_hints = edge_color=light_blue, vertex_color=dodger_blue
+  visual_hints = edge_size=1, vertex_size=3
+}
+
+//----------------------------------------------
+// EAST loiter (depth 10m). Suppressed while surfacing.
+Behavior = BHV_Loiter
+{
+  name        = loiter_east
+  pwt         = 100
+  condition   = DEPLOY = true
+  condition   = RETURN = false
+  condition   = SURFACE = false
+  condition   = LOITER_REGION = east
+
+  duration            = 150
+  duration_idle_decay = false
+  perpetual           = true
+  endflag             = LOITER_REGION = west
+
+         speed = 2.5
+     clockwise = false
+        radius = 8.0
+     nm_radius = 15.0
+       polygon = format=radial, x=160, y=-50, radius=20, pts=8, snap=1, label=loiter_east
+
+  visual_hints = edge_color=pink, vertex_color=hotpink
+  visual_hints = edge_size=1, vertex_size=3
+}
+
+//----------------------------------------------
+// Dive depths, tied to the loiter run-conditions. Suppressed while surfacing.
+Behavior = BHV_ConstantDepth
+{
+  name       = const_dep_west
+  pwt        = 100
+  duration   = no-time-limit
+  condition  = DEPLOY = true
+  condition  = RETURN = false
+  condition  = SURFACE = false
+  condition  = LOITER_REGION = west
+
+  depth = 30
+}
+
+Behavior = BHV_ConstantDepth
+{
+  name       = const_dep_east
+  pwt        = 100
+  duration   = no-time-limit
+  condition  = DEPLOY = true
+  condition  = RETURN = false
+  condition  = SURFACE = false
+  condition  = LOITER_REGION = east
+
+  depth = 10
+}
+
+//----------------------------------------------
+// PERIOD timer: 200s of submerged time, then request surfacing.
+Behavior = BHV_Timer
+{
+  name        = timer_dive
+  condition   = DEPLOY = true
+  condition   = RETURN = false
+  condition   = SURFACE = false
+
+  duration            = 200
+  duration_idle_decay = false
+  perpetual           = true
+  endflag             = SURFACE = true
+}
+
+//----------------------------------------------
+// SURFACE-HOLD timer: once at surface, wait 60s, then dive again.
+Behavior = BHV_Timer
+{
+  name        = timer_surface
+  condition   = DEPLOY = true
+  condition   = RETURN = false
+  condition   = SURFACE = true
+
+  duration            = 60
+  duration_idle_decay = false
+  perpetual           = true
+  endflag             = SURFACE = false
+}
+
+//----------------------------------------------
+// While surfacing: go to depth 0 and stop (placeholder for GPS fix).
+Behavior = BHV_ConstantDepth
+{
+  name       = const_dep_surface
+  pwt        = 100
+  duration   = no-time-limit
+  condition  = DEPLOY = true
+  condition  = RETURN = false
+  condition  = SURFACE = true
+
+  depth = 0
+}
+
+Behavior = BHV_ConstantSpeed
+{
+  name       = const_spd_stop
+  pwt        = 200
+  duration   = no-time-limit
+  condition  = DEPLOY = true
+  condition  = RETURN = false
+  condition  = SURFACE = true
+
+  speed = 0
+}
+
+//----------------------------------------------
+// Return to launch (0,0) only when the user hits the RETURN button.
+Behavior = BHV_Waypoint
+{
+  name       = waypt_return
+  pwt        = 100
+  condition  = RETURN = true
+  condition  = DEPLOY = true
+  perpetual  = true
+  updates    = RETURN_UPDATE
+  endflag    = RETURN  = false
+  endflag    = DEPLOY  = false
+  endflag    = MISSION = complete
+
+           speed = 2.0
+  capture_radius = 2.0
+     slip_radius = 8.0
+          points = 0,0
+}

@@ -18,16 +18,21 @@ using namespace std;
 
 Odometry::Odometry()
 {
+  // Configuration variables
+  m_depth_thresh   = 0;
+
   // State variables
   m_first_reading  = true;
   m_nav_received   = false;
 
   m_current_x      = 0;
   m_current_y      = 0;
+  m_current_depth  = 0;
   m_previous_x     = 0;
   m_previous_y     = 0;
 
   m_total_distance = 0;
+  m_depth_distance = 0;
 }
 
 //---------------------------------------------------------
@@ -66,6 +71,9 @@ bool Odometry::OnNewMail(MOOSMSG_LIST &NewMail)
      else if(key == "NAV_Y") {
        m_current_y    = msg.GetDouble();
        m_nav_received = true;
+     }
+     else if(key == "NAV_DEPTH") {
+       m_current_depth = msg.GetDouble();
      }
 
      else if(key != "APPCAST_REQ") // handled by AppCastingMOOSApp
@@ -111,11 +119,17 @@ bool Odometry::Iterate()
 
       m_total_distance += leg_dist;
 
+      // Only accumulate the "at-depth" distance for legs traveled while
+      // the vehicle is deeper than the configured threshold.
+      if(m_current_depth > m_depth_thresh)
+        m_depth_distance += leg_dist;
+
       m_previous_x = m_current_x;
       m_previous_y = m_current_y;
     }
 
     Notify("ODOMETRY_DIST", m_total_distance);
+    Notify("ODOMETRY_DIST_AT_DEPTH", m_depth_distance);
   }
 
   AppCastingMOOSApp::PostReport();
@@ -143,11 +157,11 @@ bool Odometry::OnStartUp()
     string value = line;
 
     bool handled = false;
-    if(param == "foo") {
-      handled = true;
-    }
-    else if(param == "bar") {
-      handled = true;
+    if(param == "depth_thresh") {
+      if(isNumber(value) && (atof(value.c_str()) >= 0)) {
+        m_depth_thresh = atof(value.c_str());
+        handled = true;
+      }
     }
 
     if(!handled)
@@ -167,6 +181,7 @@ void Odometry::registerVariables()
   AppCastingMOOSApp::RegisterVariables();
   Register("NAV_X", 0);
   Register("NAV_Y", 0);
+  Register("NAV_DEPTH", 0);
 }
 
 
@@ -188,7 +203,10 @@ bool Odometry::buildReport()
   actab.addHeaderLines();
   actab << "Current Position:" << "(" + doubleToStringX(m_current_x,2) + ", " +
                                         doubleToStringX(m_current_y,2) + ")";
+  actab << "Current Depth:"    << doubleToStringX(m_current_depth,2) + " m";
+  actab << "Depth Threshold:"  << doubleToStringX(m_depth_thresh,2) + " m";
   actab << "Total Distance:"   << doubleToStringX(m_total_distance,2) + " m";
+  actab << "Dist At Depth:"    << doubleToStringX(m_depth_distance,2) + " m";
   m_msgs << actab.getFormattedString();
 
   return(true);

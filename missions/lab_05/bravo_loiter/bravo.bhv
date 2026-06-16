@@ -1,0 +1,49 @@
+//--------    FILE: bravo.bhv  (Lab 5, Assignment 3 - Bravo Loiter)  -------
+
+initialize   DEPLOY = false
+initialize   RETURN = false
+
+//----------------------------------------------
+// Loiter at the prescribed station. After 150 seconds the duration
+// timer expires, the behavior completes, and the endflag sets
+// RETURN=true to trigger the return waypoint behavior below.
+Behavior = BHV_Loiter
+{
+  name        = loiter
+  pwt         = 100
+  condition   = RETURN = false
+  condition   = DEPLOY = true
+
+  duration    = 150
+  endflag     = RETURN = true
+
+         speed = 2.5
+     clockwise = false                 // counter-clockwise
+        radius = 8.0
+     nm_radius = 15.0
+       polygon = format=radial, x=100, y=-75, radius=30, pts=8, snap=1, label=bravo_loiter
+
+  visual_hints = nextpt_color=yellow, nextpt_lcolor=gray70
+  visual_hints = edge_color=light_blue, vertex_color=dodger_blue
+  visual_hints = edge_size=1, vertex_size=3
+}
+
+//----------------------------------------------
+// Return to the launch point (0,0) once RETURN=true.
+Behavior = BHV_Waypoint
+{
+  name       = waypt_return
+  pwt        = 100
+  condition  = RETURN = true
+  condition  = DEPLOY = true
+  perpetual  = true
+  updates    = RETURN_UPDATE
+  endflag    = RETURN  = false
+  endflag    = DEPLOY  = false
+  endflag    = MISSION = complete
+
+           speed = 2.0
+  capture_radius = 2.0
+     slip_radius = 8.0
+          points = 0,0
+}
