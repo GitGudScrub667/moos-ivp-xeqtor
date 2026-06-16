@@ -70,7 +70,7 @@ ProcessConfig = pHelmIvP
   Domain     = course:0:359:360
   Domain     = speed:0:4:21
 
-  //IVP_BEHAVIOR_DIR = ../../lib
+  IVP_BEHAVIOR_DIR = ../../lib
 
   ok_skew = any
   start_in_drive = false
