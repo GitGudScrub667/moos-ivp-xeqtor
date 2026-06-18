@@ -1,0 +1,176 @@
+//-----------------------------------------------
+// Helm Behavior file   (Lab 07 - Distributed TSP: survey + auto-refuel)
+//-----------------------------------------------
+// The survey waypoint behavior is driven dynamically by pGenPath, which posts
+// the visiting order to WPT_UPDATE. Adapted from the Lab 6 auto-refuel mission:
+// the vehicle surveys until 600s underway, then auto-returns home to refuel for
+// 60s, then resumes. Max speed 1.2 m/s per the mission constraints.
+
+initialize   DEPLOY  = true
+initialize   RETURN  = false
+initialize   STATION_KEEP = false
+initialize   SURVEY  = true
+initialize   REFUEL_NEEDED  = false   // true once a refuel is ordered/needed
+initialize   REFUEL_STATION = false   // true once stopped at the refuel point
+
+//----------------------------------------------
+// Hierarchical modes. Priority = order (first match wins):
+//   STATION-KEEPING (user) > RETURNING (user) > REFUELING > SURVEYING (default)
+set MODE = ACTIVE {
+  DEPLOY = true
+} INACTIVE
+
+set MODE = STATION-KEEPING {
+  MODE = ACTIVE
+  STATION_KEEP = true
+}
+
+set MODE = RETURNING {
+  MODE = ACTIVE
+  RETURN = true
+}
+
+// Flat refuel states, distinguished by REFUEL_STATION (helm has no grandchild modes):
+set MODE = REFUEL-TRANSIT {
+  MODE = ACTIVE
+  REFUEL_NEEDED  = true
+  REFUEL_STATION = false
+}
+
+set MODE = REFUEL-HOLD {
+  MODE = ACTIVE
+  REFUEL_NEEDED  = true
+  REFUEL_STATION = true
+}
+
+set MODE = SURVEYING {
+  MODE = ACTIVE
+  SURVEY = true
+}
+
+//----------------------------------------------
+// The survey tour. Its waypoint list is supplied dynamically by pGenPath via
+// the WPT_UPDATE variable (updates=). The initial points= is just a valid
+// placeholder until pGenPath posts the real tour.
+Behavior = BHV_Waypoint
+{
+  name      = survey
+  pwt       = 100
+  condition = MODE==SURVEYING
+  updates   = WPT_UPDATE
+  perpetual = true
+
+         speed = 1.2
+         radius = 3
+  capture_radius = 4.0
+     slip_radius = 15.0
+        points = $(START_POS)
+          lead = 3
+          lead_damper = 4
+
+  visual_hints = nextpt_color=yellow, nextpt_lcolor=khaki
+  visual_hints = vertex_color=dodger_blue, vertex_size=3
+  visual_hints = edge_color=white, edge_size=1
+}
+
+//----------------------------------------------
+Behavior = BHV_Waypoint
+{
+  name      = waypt_return
+  pwt       = 100
+  condition = MODE==RETURNING
+  endflag   = STATION_KEEP = true
+  perpetual = true
+
+      speed = 1.2
+     radius = 3.0
+  nm_radius = 15.0
+     points = $(START_POS)
+       lead = 8
+}
+
+//----------------------------------------------
+Behavior = BHV_StationKeep
+{
+  name      = station-keep
+  pwt       = 100
+  condition = MODE==STATION-KEEPING
+
+   center_activate = true
+      inner_radius = 5
+      outer_radius = 10
+       outer_speed = 1.0
+     transit_speed = 1.2
+        swing_time = 7
+      visual_hints = vertex_size=0, edge_color=gray50
+}
+
+//----------------------------------------------
+// 1) Refuel transit: head home (START_POS). On arrival post REFUEL_STATION=true
+//    -> switch to REFUEL-HOLD.
+Behavior = BHV_Waypoint
+{
+  name      = refuel_transit
+  pwt       = 100
+  condition = MODE==REFUEL-TRANSIT
+  perpetual = true
+  endflag   = REFUEL_STATION = true
+
+         speed = 1.2
+        radius = 3.0
+     nm_radius = 15.0
+        points = $(START_POS)
+          lead = 8
+}
+
+//----------------------------------------------
+// 2) Hold station at home while refueling (REFUEL-HOLD).
+Behavior = BHV_StationKeep
+{
+  name      = refuel_station
+  pwt       = 100
+  condition = MODE==REFUEL-HOLD
+
+      station_pt = $(START_POS)
+    inner_radius = 5
+    outer_radius = 10
+     outer_speed = 1.0
+   transit_speed = 1.2
+      swing_time = 7
+    visual_hints = vertex_size=0, edge_color=gray40
+}
+
+//----------------------------------------------
+// 3) Refuel duration: 60s in REFUEL-HOLD. On completion clear REFUEL_NEEDED
+//    (leave refueling -> resume SURVEYING) and reset REFUEL_STATION.
+Behavior = BHV_Timer
+{
+  name      = refuel_timer
+  pwt       = 100
+  condition = MODE==REFUEL-HOLD
+  perpetual = true
+  endflag   = REFUEL_NEEDED  = false
+  endflag   = REFUEL_STATION = false
+
+  status_suffix = _HOLD
+  duration = 60
+}
+
+//----------------------------------------------
+// Tour duration limit: 600s underway -> auto-order a refuel. Runs only while
+// actively surveying (not refueling, not station-keeping). duration_idle_decay
+// = false freezes the clock when idle, so time spent stationed isn't counted.
+Behavior = BHV_Timer
+{
+  name      = refuel_countdown
+  pwt       = 100
+  condition = DEPLOY = true
+  condition = REFUEL_NEEDED = false
+  condition = STATION_KEEP  = false
+  perpetual = true
+  endflag   = REFUEL_NEEDED = true
+
+  status_suffix = _FUEL
+  duration_idle_decay = false
+  duration = 600
+}

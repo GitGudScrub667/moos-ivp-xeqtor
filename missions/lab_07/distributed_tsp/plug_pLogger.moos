@@ -1,0 +1,30 @@
+//--------------------------------------------------
+// pLogger Configuration Block (Created from Plugin)
+
+ProcessConfig = pLogger
+{
+  AppTick 	= 10
+  CommsTick 	= 10
+  
+  File		= LOG_%(VNAME)
+  PATH		= ./
+  AsyncLog 	= true
+  FileTimeStamp = true
+
+  // Log it all!!!!!
+  LogAuxSrc       = true
+  WildCardLogging = true
+
+  WildCardOmitPattern = *_STATUS
+
+  // [3.6.2] Pre-register the burst variables so the logger is listening from
+  // t=0. Wildcard logging only registers a var AFTER it appears on
+  // DB_VAR_SUMMARY, so a one-shot 100-point burst can be partially missed.
+  // (Harmless in a community where a given var never appears.)
+  Log = VISIT_POINT        @ 0 NOSYNC
+  Log = VISIT_POINT_HENRY  @ 0 NOSYNC
+  Log = VISIT_POINT_GILDA  @ 0 NOSYNC
+  Log = VIEW_POINT         @ 0 NOSYNC
+
+  CompressAlogs = false
+}

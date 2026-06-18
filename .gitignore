@@ -48,12 +48,16 @@ targ_*
 .LastOpenedMOOSLogDirectory
 MOOSLog*/
 Log*/
+LOG_*/
 XLog*/
 
 # Build dirs
 build/
 bin/
 lib/
+
+# macOS
+.DS_Store
 
 # Temp files (emacs, etc)
 *#
