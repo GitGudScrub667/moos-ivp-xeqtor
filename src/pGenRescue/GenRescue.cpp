@@ -8,6 +8,7 @@
 #include <iterator>
 #include "GenRescue.h"
 #include "MBUtils.h"
+#include "ACTable.h"
 #include "ColorParse.h"
 #include "XYPoint.h"
 #include "XYSegList.h"
@@ -28,6 +29,7 @@ GenRescue::GenRescue()
   m_nav_y = 0;
   m_nav_x_set = 0;
   m_nav_y_set = 0;
+  m_plan_pending = false;
 }
 
 //---------------------------------------------------------
@@ -82,10 +84,14 @@ bool GenRescue::OnConnectToServer()
 bool GenRescue::Iterate()
 {
   AppCastingMOOSApp::Iterate();
-  
-  //if(m_plan_pending)
-  if((m_iteration % 20) == 0)
+
+  // Replan only when a new swimmer has arrived, and only once we
+  // actually have a NAV fix and at least one swimmer to visit.
+  if(m_plan_pending && m_nav_x_set && m_nav_y_set &&
+     (m_swimmers.size() > 0)) {
     postShortestPath();
+    m_plan_pending = false;
+  }
 
   AppCastingMOOSApp::PostReport();
   return(true);
@@ -122,6 +128,8 @@ void GenRescue::RegisterVariables()
   AppCastingMOOSApp::RegisterVariables();
   Register("SWIMMER_ALERT", 0);
   Register("FOUND_SWIMMER", 0);
+  Register("NAV_X", 0);
+  Register("NAV_Y", 0);
 }
 
 
@@ -130,6 +138,43 @@ void GenRescue::RegisterVariables()
 
 bool GenRescue::handleMailNewSwimmer(string str)
 {
+  // Expected format:  x=23, y=54, id=04
+  double xval = 0;
+  double yval = 0;
+  string id;
+  bool   x_set = false;
+  bool   y_set = false;
+
+  vector<string> svector = parseString(str, ',');
+  for(unsigned int i=0; i<svector.size(); i++) {
+    string param = tolower(biteStringX(svector[i], '='));
+    string value = svector[i];
+    if(param == "x") {
+      xval  = atof(value.c_str());
+      x_set = true;
+    }
+    else if(param == "y") {
+      yval  = atof(value.c_str());
+      y_set = true;
+    }
+    else if(param == "id")
+      id = value;
+  }
+
+  // Reject a malformed alert (missing any field)
+  if(!x_set || !y_set || (id == ""))
+    return(false);
+
+  // Already known? Ignore it (alerts repeat every 15s). No replan.
+  if(m_swimmers.count(id) != 0)
+    return(true);
+
+  // New swimmer: remember it and flag that we need to replan.
+  XYPoint pt(xval, yval);
+  pt.set_label(id);
+  m_swimmers[id] = pt;
+  m_plan_pending = true;
+
   return(true);
 }
 
@@ -146,39 +191,23 @@ bool GenRescue::handleMailFoundSwimmer(string str)
 
 void GenRescue::postShortestPath()
 {
-  // If path has not been set, determine a random path of 9
-  // points, and make a greedy path from ownship start position.
-  // Once it has been set, don't change it. But keep posting it
-  // once every 20 iterations.
-  
-  if(m_path.size() == 0) {
-    XYFieldGenerator generator;
-    generator.addPolygon("-184,-5:-188, -14:-130,-44:-106,-3");
-    generator.addPolygon("-85,-3:-89,-8:-51,-1");
-    generator.addPolygon("-78,-74:-54,-32:-104,-53");
-    generator.setBufferDist(7);
-    generator.setMaxTries(1000);
-    generator.generatePoints(9);
-    
-    vector<XYPoint> pts = generator.getPoints();
-    
-    for(unsigned int i=0; i<pts.size(); i++) {
-      XYPoint pt = pts[i];
-      m_path.add_vertex(pt.x(), pt.y());
-    }
-    // Seglist needs a name, refer when drawging and erasing
-    m_path.set_label("one");    
-    XYSegList segl;
-    segl.add_vertex(m_nav_x, m_nav_y);
-
-    m_path = greedyPath(m_path, m_nav_x, m_nav_y);
-    
-    // Seglist needs a name, refer when drawging and erasing
-    segl.set_label("one");
+  // Build a seglist from every swimmer we currently know about.
+  XYSegList swim_pts;
+  map<string, XYPoint>::iterator it;
+  for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
+    XYPoint pt = it->second;
+    swim_pts.add_vertex(pt.x(), pt.y());
   }
-  
+
+  // Order the swimmer points into a short tour, greedily, starting
+  // from ownship's current position (nearest-neighbor ordering).
+  m_path = greedyPath(swim_pts, m_nav_x, m_nav_y);
+  m_path.set_label("rescue");
+
+  // Draw the planned route in the viewer.
   Notify("VIEW_SEGLIST", m_path.get_spec());
 
+  // Update the waypoint behavior with the new path.
   string update_var = "SURVEY_UPDATE";
   string update_str = "points = " + m_path.get_spec_pts();
 
@@ -221,5 +250,24 @@ void GenRescue::postNullPath()
 
 bool GenRescue::buildReport()
 {
+  m_msgs << "Vehicle Name:     " << m_vname                        << endl;
+  m_msgs << "Swimmers Known:   " << m_swimmers.size()              << endl;
+  m_msgs << "NAV_X/Y Received: " << boolToString(m_nav_x_set && m_nav_y_set) << endl;
+  m_msgs << "Plan Pending:     " << boolToString(m_plan_pending)   << endl;
+  m_msgs << "Path Size:        " << m_path.size()                  << endl;
+  m_msgs << endl;
+
+  ACTable actab(2);
+  actab << "Swimmer ID | Location (x, y)";
+  actab.addHeaderLines();
+  map<string, XYPoint>::iterator it;
+  for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
+    string  id = it->first;
+    XYPoint pt = it->second;
+    string  loc = doubleToStringX(pt.x(),1) + ", " + doubleToStringX(pt.y(),1);
+    actab << id << loc;
+  }
+  m_msgs << actab.getFormattedString();
+
   return(true);
 }

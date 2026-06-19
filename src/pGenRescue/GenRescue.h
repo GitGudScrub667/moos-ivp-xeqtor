@@ -44,7 +44,16 @@ class GenRescue : public AppCastingMOOSApp
   double     m_nav_x;
   double     m_nav_y;
   bool       m_nav_x_set;
-  bool       m_nav_y_set;    
+  bool       m_nav_y_set;
+
+  // Swimmers we have been alerted to, keyed by swimmer id.
+  // Keying by id means repeated SWIMMER_ALERTs for the same id
+  // are automatically ignored (no duplicate insertion).
+  std::map<std::string, XYPoint> m_swimmers;
+
+  // Set true when a new (previously unknown) swimmer arrives, so
+  // Iterate() knows to regenerate the path and re-post the update.
+  bool m_plan_pending;
 };
 
 #endif 
