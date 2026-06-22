@@ -52,6 +52,8 @@ GenRescue::GenRescue()
   m_overshoot_max   = 8;   // m: extra inset for a 180-deg turn (scaled by angle)
   m_region_set = false;
 
+  m_use_two_opt = true;    // uncross the tour after ordering
+
   // Opponent-aware contest tuning (starting values; tune vs 2 boats).
   m_lose_margin     = 8;   // s: skip a swimmer the opponent beats us to by >this
   m_contest_window  = 10;  // s: within this ETA margin -> contested
@@ -488,6 +490,83 @@ bool GenRescue::haveFreshOpponent()
 }
 
 //---------------------------------------------------------
+// Procedure: pathTime()
+//   Total time to drive ownship through the waypoint list in order,
+//   using the same travel + turn model as the ordering cost. The turn
+//   cost at each leg depends on the heading carried from the prior leg.
+
+double GenRescue::pathTime(const vector<double> &vx, const vector<double> &vy)
+{
+  double t  = 0;
+  double cx = m_nav_x;
+  double cy = m_nav_y;
+  double ch = m_nav_heading;
+  for(unsigned int i=0; i<vx.size(); i++) {
+    t += etaToPoint(cx, cy, ch, m_speed, vx[i], vy[i]);
+    ch = relAng(cx, cy, vx[i], vy[i]);   // heading we arrive on
+    cx = vx[i];
+    cy = vy[i];
+  }
+  return(t);
+}
+
+//---------------------------------------------------------
+// Procedure: twoOptImprove()
+//   Repeatedly reverse a stretch of the tour whenever doing so lowers
+//   total traversal time. This uncrosses the greedy tour and removes
+//   U-turns. Waypoint 0 is pinned so the contest-first pick stays put.
+
+XYSegList GenRescue::twoOptImprove(XYSegList path)
+{
+  unsigned int n = path.size();
+  if(!m_use_two_opt || (n < 3))
+    return(path);
+
+  // Work on plain arrays of the vertices.
+  vector<double> vx, vy;
+  for(unsigned int i=0; i<n; i++) {
+    vx.push_back(path.get_vx(i));
+    vy.push_back(path.get_vy(i));
+  }
+
+  bool         improved = true;
+  unsigned int guard    = 0;
+  while(improved && (guard < 100)) {
+    improved = false;
+    guard++;
+    double base = pathTime(vx, vy);
+
+    // i starts at 1: waypoint 0 is pinned (the contest-first target).
+    for(unsigned int i=1; (i+1)<n; i++) {
+      for(unsigned int j=i+1; j<n; j++) {
+        // Candidate: reverse the [i..j] stretch.
+        vector<double> cx = vx;
+        vector<double> cy = vy;
+        unsigned int a = i, b = j;
+        while(a < b) {
+          double tx = cx[a]; cx[a] = cx[b]; cx[b] = tx;
+          double ty = cy[a]; cy[a] = cy[b]; cy[b] = ty;
+          a++;
+          b--;
+        }
+        double t = pathTime(cx, cy);
+        if((t + 1e-6) < base) {
+          vx = cx;
+          vy = cy;
+          base = t;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  XYSegList out;
+  for(unsigned int i=0; i<n; i++)
+    out.add_vertex(vx[i], vy[i]);
+  return(out);
+}
+
+//---------------------------------------------------------
 // Procedure: postShortestPath()
 
 void GenRescue::postShortestPath()
@@ -565,6 +644,10 @@ void GenRescue::postShortestPath()
   // the contest factor), so we dive into packs first, avoid U-turns,
   // and prioritize swimmers we can deny the opponent.
   m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading, factors, mults);
+
+  // Uncross the greedy tour (2-opt) to cut traversal time and remove
+  // U-turns, before the boundary inset reads the final turn angles.
+  m_path = twoOptImprove(m_path);
 
   // Pull waypoints inside the boundary, more where the tour turns hard,
   // so turn overshoot can never carry the boat out of bounds.
@@ -729,6 +812,7 @@ bool GenRescue::buildReport()
   m_msgs << "  Boundary margin:          " << doubleToStringX(m_boundary_margin,1)
          << " +" << doubleToStringX(m_overshoot_max,1) << "/turn m  (region "
          << (m_region_set ? "known" : "unknown") << ")"               << endl;
+  m_msgs << "  2-opt tour cleanup:       " << (m_use_two_opt ? "on" : "off") << endl;
   m_msgs << endl;
 
   // --- Section 2: Rescue progress (the scoreboard) ---
