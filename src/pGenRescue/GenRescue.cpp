@@ -15,6 +15,8 @@
 #include "GeomUtils.h"
 #include "AngleUtils.h"
 #include "PathUtils.h"
+#include "NodeRecord.h"
+#include "NodeRecordUtils.h"
 #include "XYFormatUtilsPoly.h"
 #include "XYFieldGenerator.h"
 
@@ -41,6 +43,15 @@ GenRescue::GenRescue()
   // Time-to-target tuning (starting values; tune by rebuild).
   m_speed     = 1.2;       // m/s: assumed transit speed (survey speed)
   m_turn_rate = 30;        // deg/s: <= 0 disables the heading penalty
+
+  // Opponent-aware contest tuning (starting values; tune vs 2 boats).
+  m_lose_margin     = 8;   // s: skip a swimmer the opponent beats us to by >this
+  m_contest_window  = 10;  // s: within this ETA margin -> contested
+  m_contest_boost   = 0.6; // score multiplier for a contested swimmer
+  m_contact_max_age = 12;  // s: ignore opponent contacts older than this
+  m_replan_interval = 5;   // s: replan at least this often when opponent known
+
+  m_last_replan_utc = 0;
 }
 
 //---------------------------------------------------------
@@ -73,6 +84,8 @@ bool GenRescue::OnNewMail(MOOSMSG_LIST &NewMail)
       m_nav_heading = msg.GetDouble();
       m_nav_heading_set = true;
     }
+    else if(key == "NODE_REPORT")
+      handled = handleMailNodeReport(sval);
 
     else if(key != "APPCAST_REQ") // handle by AppCastingMOOSApp
       handled = false;
@@ -100,13 +113,23 @@ bool GenRescue::Iterate()
 {
   AppCastingMOOSApp::Iterate();
 
+  // Opponent reactivity: while a fresh opponent contact exists, replan
+  // periodically so our contest decisions track the opponent's motion.
+  // Dormant (no extra replanning) when no opponent is around.
+  if(!m_plan_pending && (m_swimmers.size() > 0) && haveFreshOpponent()) {
+    if((MOOSTime() - m_last_replan_utc) >= m_replan_interval)
+      m_plan_pending = true;
+  }
+
   // Replan when a new swimmer has arrived (or one was removed), once we
   // actually have a NAV fix. If there are no swimmers left to plan for
   // we still clear the flag so it can't stick "true" after the last
   // rescue.
   if(m_plan_pending && m_nav_x_set && m_nav_y_set) {
-    if(m_swimmers.size() > 0)
+    if(m_swimmers.size() > 0) {
       postShortestPath();
+      m_last_replan_utc = MOOSTime();
+    }
     m_plan_pending = false;
   }
 
@@ -148,6 +171,7 @@ void GenRescue::RegisterVariables()
   Register("NAV_X", 0);
   Register("NAV_Y", 0);
   Register("NAV_HEADING", 0);
+  Register("NODE_REPORT", 0);
 }
 
 
@@ -243,23 +267,168 @@ bool GenRescue::handleMailFoundSwimmer(string str)
 }
 
 //---------------------------------------------------------
+// Procedure: handleMailNodeReport()
+//   Ingest another vehicle's NODE_REPORT. Ownship is skipped; every
+//   other craft is tracked as a possible opponent for contest scoring.
+
+bool GenRescue::handleMailNodeReport(string str)
+{
+  NodeRecord record = string2NodeRecord(str);
+  string name = record.getName();
+
+  // Skip our own report (we already track ownship via NAV_*).
+  if((name == "") || (name == m_host_community))
+    return(true);
+
+  Contact c;
+  c.x       = record.getX();
+  c.y       = record.getY();
+  c.heading = record.getHeading();
+  c.speed   = record.getSpeed();
+  c.utc     = MOOSTime();   // local receipt time, robust to clock skew
+  m_contacts[name] = c;
+
+  return(true);
+}
+
+//---------------------------------------------------------
+// Procedure: etaToPoint()
+//   Seconds for a craft at (px,py) heading ph at the given speed to
+//   reach (tx,ty): straight-line travel time plus the time to turn
+//   onto the bearing. Speed is floored so a stationary craft still
+//   yields a finite estimate.
+
+double GenRescue::etaToPoint(double px, double py, double ph,
+                             double speed, double tx, double ty)
+{
+  if(speed < m_speed)
+    speed = m_speed;
+
+  double d           = distPointToPoint(px, py, tx, ty);
+  double travel_time = d / speed;
+
+  double turn_time = 0;
+  if(m_turn_rate > 0) {
+    double brg  = relAng(px, py, tx, ty);
+    double aoff = angleDiff(ph, brg);
+    turn_time   = aoff / m_turn_rate;
+  }
+  return(travel_time + turn_time);
+}
+
+//---------------------------------------------------------
+// Procedure: ownshipETA()
+
+double GenRescue::ownshipETA(double tx, double ty)
+{
+  return(etaToPoint(m_nav_x, m_nav_y, m_nav_heading, m_speed, tx, ty));
+}
+
+//---------------------------------------------------------
+// Procedure: opponentETA()
+//   Smallest ETA over all FRESH opponent contacts. have_opp is set
+//   false if no contact is fresh enough to count.
+
+double GenRescue::opponentETA(double tx, double ty, bool &have_opp)
+{
+  have_opp = false;
+  double best = -1;
+  double now  = MOOSTime();
+
+  map<string, Contact>::iterator p;
+  for(p=m_contacts.begin(); p!=m_contacts.end(); p++) {
+    Contact c = p->second;
+    if((now - c.utc) > m_contact_max_age)   // stale -> ignore
+      continue;
+    double eta = etaToPoint(c.x, c.y, c.heading, c.speed, tx, ty);
+    if(!have_opp || (eta < best)) {
+      best = eta;
+      have_opp = true;
+    }
+  }
+  return(best);
+}
+
+//---------------------------------------------------------
+// Procedure: contestVerdict()
+//   Compare our ETA to the best opponent ETA for a swimmer. Fills the
+//   score multiplier (factor) and the ETA margin (opp - us, so >0 means
+//   we are faster), and returns a short label for the report.
+
+string GenRescue::contestVerdict(double tx, double ty,
+                                 double &factor, double &margin)
+{
+  factor = 1.0;
+  margin = 0;
+
+  bool   have_opp = false;
+  double opp_eta  = opponentETA(tx, ty, have_opp);
+  if(!have_opp)
+    return("-");                     // no opponent -> neutral (today's behavior)
+
+  double our_eta = ownshipETA(tx, ty);
+  margin = opp_eta - our_eta;
+
+  if(margin < -m_lose_margin)        // opponent clearly wins -> skip it
+    return("LOST");
+  if(margin < m_contest_window) {    // close either way -> fight for it
+    factor = m_contest_boost;
+    return("CONTESTED");
+  }
+  return("WIN");                     // we win comfortably -> no rush
+}
+
+//---------------------------------------------------------
+// Procedure: haveFreshOpponent()
+
+bool GenRescue::haveFreshOpponent()
+{
+  double now = MOOSTime();
+  map<string, Contact>::iterator p;
+  for(p=m_contacts.begin(); p!=m_contacts.end(); p++) {
+    if((now - p->second.utc) <= m_contact_max_age)
+      return(true);
+  }
+  return(false);
+}
+
+//---------------------------------------------------------
 // Procedure: postShortestPath()
 
 void GenRescue::postShortestPath()
 {
-  // Build a seglist from every swimmer we currently know about.
-  XYSegList swim_pts;
+  // Build the candidate set from the swimmers we know about. Each gets
+  // an opponent-contest factor; swimmers the opponent clearly beats us
+  // to ("LOST") are dropped so we don't waste travel on them.
+  XYSegList      swim_pts;
+  vector<double> factors;
   map<string, XYPoint>::iterator it;
   for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
     XYPoint pt = it->second;
+    double  factor, margin;
+    string  verdict = contestVerdict(pt.x(), pt.y(), factor, margin);
+    if(verdict == "LOST")
+      continue;
     swim_pts.add_vertex(pt.x(), pt.y());
+    factors.push_back(factor);
+  }
+
+  // Safety net: never idle. If the contest filter dropped everyone,
+  // re-add all swimmers with neutral factors and go after them anyway.
+  if(swim_pts.size() == 0) {
+    for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
+      XYPoint pt = it->second;
+      swim_pts.add_vertex(pt.x(), pt.y());
+      factors.push_back(1.0);
+    }
   }
 
   // Order the swimmer points into a short tour, starting from
   // ownship's position and heading. Like nearest-neighbor, but cost
-  // is travel+turn time discounted by local swimmer density, so we
-  // dive into packs first and avoid U-turns to swimmers behind us.
-  m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading);
+  // is travel+turn time discounted by local swimmer density (and by
+  // the contest factor), so we dive into packs first, avoid U-turns,
+  // and prioritize swimmers we can deny the opponent.
+  m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading, factors);
   m_path.set_label("rescue");
 
   // Draw the planned route in the viewer.
@@ -281,7 +450,8 @@ void GenRescue::postShortestPath()
 //   toward diving into dense packs first instead of chasing a lone
 //   nearby swimmer. With m_cluster_weight = 0 it reduces to greedy.
 
-XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy, double sh)
+XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy, double sh,
+                                 vector<double> factors)
 {
   unsigned int i, j, k, vsize = swim_pts.size();
 
@@ -331,8 +501,11 @@ XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy, doubl
           neighbors++;
       }
 
-      // Discount the time-to-target by local density.
+      // Discount the time-to-target by local density, then apply the
+      // opponent-contest factor (1.0 when no opponent / not contested).
       double score = cost / (1.0 + (m_cluster_weight * neighbors));
+      if(j < factors.size())
+        score = score * factors[j];
 
       if((best_score < 0) || (score < best_score)) {
         best_score = score;
@@ -420,6 +593,26 @@ bool GenRescue::buildReport()
       m_msgs << " hdg=" << doubleToStringX(m_nav_heading,0);
   }
   m_msgs << endl;
+
+  // Opponent summary (fresh contacts only).
+  m_msgs << "  Opponent:         ";
+  if(!haveFreshOpponent())
+    m_msgs << "none seen";
+  else {
+    double now = MOOSTime();
+    map<string, Contact>::iterator cp;
+    for(cp=m_contacts.begin(); cp!=m_contacts.end(); cp++) {
+      Contact c = cp->second;
+      if((now - c.utc) > m_contact_max_age)
+        continue;
+      m_msgs << cp->first << " pos=(" << doubleToStringX(c.x,1) << ", "
+             << doubleToStringX(c.y,1) << ") spd=" << doubleToStringX(c.speed,1)
+             << " hdg=" << doubleToStringX(c.heading,0)
+             << " age=" << doubleToStringX(now - c.utc,0) << "s  ";
+    }
+  }
+  m_msgs << endl;
+
   m_msgs << "  Swimmers active:  " << m_swimmers.size()               << endl;
   m_msgs << "  Rescued total:    " << m_rescued.size()
          << "   (by us: " << resc_us << ", by opponent: " << resc_other << ")" << endl;
@@ -449,8 +642,8 @@ bool GenRescue::buildReport()
 
   // --- Section 3: Active swimmers (id | location | range-from-ownship) ---
   m_msgs << "Active swimmers"                                         << endl;
-  ACTable actab(3);
-  actab << "ID | Location (x, y) | Range";
+  ACTable actab(4);
+  actab << "ID | Location (x, y) | Range | Contest";
   actab.addHeaderLines();
   map<string, XYPoint>::iterator it;
   for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
@@ -460,7 +653,16 @@ bool GenRescue::buildReport()
     string  rng = "--";
     if(m_nav_x_set && m_nav_y_set)
       rng = doubleToStringX(distPointToPoint(m_nav_x,m_nav_y,pt.x(),pt.y()),0);
-    actab << id << loc << rng;
+
+    // Contest verdict (+margin in seconds when an opponent is known).
+    double factor, margin;
+    string verdict = "-";
+    if(m_nav_x_set && m_nav_y_set) {
+      verdict = contestVerdict(pt.x(), pt.y(), factor, margin);
+      if(verdict != "-")
+        verdict += " (" + doubleToStringX(margin,0) + "s)";
+    }
+    actab << id << loc << rng << verdict;
   }
   m_msgs << actab.getFormattedString();
   m_msgs << endl << endl;
