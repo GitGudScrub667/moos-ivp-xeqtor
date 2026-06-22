@@ -75,6 +75,14 @@ class GenRescue : public AppCastingMOOSApp
   // more). Returns the tightened path.
   XYSegList tightenForTurns(XYSegList path);
 
+  // 2-opt local search: uncross the ordered tour to minimize traversal
+  // time (travel + turning), pinning waypoint 0 so the contest-first
+  // pick is preserved. Returns the improved path.
+  XYSegList twoOptImprove(XYSegList path);
+  // Total time to traverse a waypoint list from ownship's pose, using
+  // the same travel+turn model as the ordering cost.
+  double pathTime(const std::vector<double> &vx, const std::vector<double> &vy);
+
  private: // Config variables
   std::string m_vname;
 
@@ -108,6 +116,10 @@ class GenRescue : public AppCastingMOOSApp
   //                       scaled down for gentler turns
   double m_boundary_margin;
   double m_overshoot_max;
+
+  // 2-opt tour cleanup (idea C). When true, the ordered tour is
+  // uncrossed to cut traversal time; false leaves clusterPath's order.
+  bool m_use_two_opt;
 
   // Opponent-aware contest tuning (idea A). All dormant when no fresh
   // opponent contact exists (then behavior == idea #1/#5 exactly).
