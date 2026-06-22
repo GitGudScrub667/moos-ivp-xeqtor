@@ -11,7 +11,6 @@
 #include <vector>
 #include <string>
 #include <map>
-#include <set>
 #include "MOOS/libMOOS/Thirdparty/AppCasting/AppCastingMOOSApp.h"
 #include "XYPoint.h"
 #include "XYPolygon.h"
@@ -76,11 +75,13 @@ class GenRescue : public AppCastingMOOSApp
   // are automatically ignored (no duplicate insertion).
   std::map<std::string, XYPoint> m_swimmers;
 
-  // Ids of swimmers already rescued (by us or the opponent). Because
-  // SWIMMER_ALERT repeats every ~15s, erasing a found swimmer is not
-  // enough -- the next repeat would look "new" and get re-added. This
-  // set is permanent memory so a rescued id is ignored forever.
-  std::set<std::string> m_rescued;
+  // Swimmers already rescued, keyed by id -> finder (vehicle name that
+  // made the rescue, us or an opponent). Because SWIMMER_ALERT repeats
+  // every ~15s, erasing a found swimmer is not enough -- the next
+  // repeat would look "new" and get re-added. This map is permanent
+  // memory so a rescued id is ignored forever, and the finder lets us
+  // tally rescues-by-us vs rescues-by-opponent in the report.
+  std::map<std::string, std::string> m_rescued;
 
   // Set true when a new (previously unknown) swimmer arrives, so
   // Iterate() knows to regenerate the path and re-post the update.
