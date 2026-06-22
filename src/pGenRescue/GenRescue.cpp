@@ -165,6 +165,12 @@ bool GenRescue::handleMailNewSwimmer(string str)
   if(!x_set || !y_set || (id == ""))
     return(false);
 
+  // Already rescued? Ignore forever. SWIMMER_ALERT keeps repeating
+  // every ~15s even after a swimmer is saved, so without this check
+  // a found swimmer would be re-added and re-enter the path.
+  if(m_rescued.count(id) != 0)
+    return(true);
+
   // Already known? Ignore it (alerts repeat every 15s). No replan.
   if(m_swimmers.count(id) != 0)
     return(true);
@@ -183,6 +189,37 @@ bool GenRescue::handleMailNewSwimmer(string str)
 
 bool GenRescue::handleMailFoundSwimmer(string str)
 {
+  // Expected format:  id=04, finder=abe
+  string id;
+  string finder;
+
+  vector<string> svector = parseString(str, ',');
+  for(unsigned int i=0; i<svector.size(); i++) {
+    string param = tolower(biteStringX(svector[i], '='));
+    string value = svector[i];
+    if(param == "id")
+      id = value;
+    else if(param == "finder")
+      finder = value;
+  }
+
+  // Malformed alert (no id): reject so it logs a run warning.
+  if(id == "")
+    return(false);
+
+  // We don't know this swimmer (never alerted, or already removed):
+  // nothing to do, but the mail itself was well-formed.
+  if(m_swimmers.count(id) == 0)
+    return(true);
+
+  // The swimmer has been rescued -- by us OR by the opponent. Record
+  // it as rescued forever (so a repeating SWIMMER_ALERT can't revive
+  // it), drop it from the active set, and flag a replan so our tour
+  // stops routing toward a swimmer that no longer needs saving.
+  m_rescued.insert(id);
+  m_swimmers.erase(id);
+  m_plan_pending = true;
+
   return(true);
 }
 
