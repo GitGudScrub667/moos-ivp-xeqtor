@@ -40,7 +40,9 @@ class GenRescue : public AppCastingMOOSApp
   // Cluster-aware ordering: like a greedy nearest-neighbor tour, but
   // each candidate's distance is discounted by how many other swimmers
   // sit nearby, so the boat prefers to dive into dense packs first.
-  XYSegList clusterPath(XYSegList swim_pts, double sx, double sy);
+  // sh = boat heading, used for the time-to-target cost so a swimmer
+  // behind the bow is penalized for the turn it would take to reach.
+  XYSegList clusterPath(XYSegList swim_pts, double sx, double sy, double sh);
 
  private: // Config variables
   std::string m_vname;
@@ -51,13 +53,23 @@ class GenRescue : public AppCastingMOOSApp
   //   m_cluster_weight : how strongly density discounts distance (0 = plain greedy)
   double m_cluster_radius;
   double m_cluster_weight;
+
+  // Time-to-target tuning (idea #5). Cost to reach a swimmer is
+  // travel time plus turning time:
+  //   m_speed     : assumed transit speed (m/s) -> travel_time = dist/speed
+  //   m_turn_rate : assumed turn rate (deg/s)   -> turn_time   = angle/turn_rate
+  //                 set <= 0 to ignore heading entirely (recovers idea #1)
+  double m_speed;
+  double m_turn_rate;
   
  private: // State variables
   XYSegList  m_path;
   double     m_nav_x;
   double     m_nav_y;
+  double     m_nav_heading;
   bool       m_nav_x_set;
   bool       m_nav_y_set;
+  bool       m_nav_heading_set;
 
   // Swimmers we have been alerted to, keyed by swimmer id.
   // Keying by id means repeated SWIMMER_ALERTs for the same id

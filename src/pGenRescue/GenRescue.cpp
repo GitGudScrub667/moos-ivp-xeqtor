@@ -13,6 +13,7 @@
 #include "XYPoint.h"
 #include "XYSegList.h"
 #include "GeomUtils.h"
+#include "AngleUtils.h"
 #include "PathUtils.h"
 #include "XYFormatUtilsPoly.h"
 #include "XYFieldGenerator.h"
@@ -27,13 +28,19 @@ GenRescue::GenRescue()
   // Initialize state variables
   m_nav_x = 0;
   m_nav_y = 0;
+  m_nav_heading = 0;
   m_nav_x_set = 0;
   m_nav_y_set = 0;
+  m_nav_heading_set = false;
   m_plan_pending = false;
 
   // Cluster-aware path tuning (starting values; tune by rebuild).
   m_cluster_radius = 20;   // meters: radius for counting neighbors
   m_cluster_weight = 0.6;  // 0 = plain greedy; higher = favor packs more
+
+  // Time-to-target tuning (starting values; tune by rebuild).
+  m_speed     = 1.2;       // m/s: assumed transit speed (survey speed)
+  m_turn_rate = 30;        // deg/s: <= 0 disables the heading penalty
 }
 
 //---------------------------------------------------------
@@ -61,6 +68,10 @@ bool GenRescue::OnNewMail(MOOSMSG_LIST &NewMail)
     else if(key == "NAV_Y") {
       m_nav_y = msg.GetDouble();
       m_nav_y_set = true;
+    }
+    else if(key == "NAV_HEADING") {
+      m_nav_heading = msg.GetDouble();
+      m_nav_heading_set = true;
     }
 
     else if(key != "APPCAST_REQ") // handle by AppCastingMOOSApp
@@ -134,6 +145,7 @@ void GenRescue::RegisterVariables()
   Register("FOUND_SWIMMER", 0);
   Register("NAV_X", 0);
   Register("NAV_Y", 0);
+  Register("NAV_HEADING", 0);
 }
 
 
@@ -241,9 +253,10 @@ void GenRescue::postShortestPath()
   }
 
   // Order the swimmer points into a short tour, starting from
-  // ownship's position. Like nearest-neighbor, but distance is
-  // discounted by local swimmer density so we dive into packs first.
-  m_path = clusterPath(swim_pts, m_nav_x, m_nav_y);
+  // ownship's position and heading. Like nearest-neighbor, but cost
+  // is travel+turn time discounted by local swimmer density, so we
+  // dive into packs first and avoid U-turns to swimmers behind us.
+  m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading);
   m_path.set_label("rescue");
 
   // Draw the planned route in the viewer.
@@ -265,7 +278,7 @@ void GenRescue::postShortestPath()
 //   toward diving into dense packs first instead of chasing a lone
 //   nearby swimmer. With m_cluster_weight = 0 it reduces to greedy.
 
-XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy)
+XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy, double sh)
 {
   unsigned int i, j, k, vsize = swim_pts.size();
 
@@ -278,6 +291,11 @@ XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy)
     visited.push_back(false);
   }
 
+  // Working heading walks along the tour: it starts at the boat's real
+  // heading (if known), then becomes the direction of each leg we commit.
+  double cur_h  = sh;
+  bool   have_h = m_nav_heading_set;
+
   XYSegList new_segl;
 
   // Build the tour one vertex at a time.
@@ -289,7 +307,17 @@ XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy)
       if(visited[j])
         continue;
 
-      double d = distPointToPoint(sx, sy, vx[j], vy[j]);
+      // Time to reach j = travel time + time spent turning toward it.
+      double d           = distPointToPoint(sx, sy, vx[j], vy[j]);
+      double travel_time = d / m_speed;
+
+      double turn_time = 0;
+      if(have_h && (m_turn_rate > 0)) {
+        double brg  = relAng(sx, sy, vx[j], vy[j]);  // bearing to candidate
+        double aoff = angleDiff(cur_h, brg);         // [0,180] off the bow
+        turn_time   = aoff / m_turn_rate;
+      }
+      double cost = travel_time + turn_time;
 
       // Count OTHER still-unvisited swimmers within radius of j.
       unsigned int neighbors = 0;
@@ -300,8 +328,8 @@ XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy)
           neighbors++;
       }
 
-      // Discount distance by local density. neighbors == 0 -> raw dist.
-      double score = d / (1.0 + (m_cluster_weight * neighbors));
+      // Discount the time-to-target by local density.
+      double score = cost / (1.0 + (m_cluster_weight * neighbors));
 
       if((best_score < 0) || (score < best_score)) {
         best_score = score;
@@ -309,12 +337,17 @@ XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy)
       }
     }
 
-    // Commit the winning vertex and step the "current position" to it.
+    // Commit the winning vertex. The leg we just traveled defines the
+    // heading we will arrive on, so use it for the next step's turn cost.
     if(best_score >= 0) {
-      new_segl.add_vertex(vx[best_ix], vy[best_ix]);
+      double bx = vx[best_ix];
+      double by = vy[best_ix];
+      new_segl.add_vertex(bx, by);
       visited[best_ix] = true;
-      sx = vx[best_ix];
-      sy = vy[best_ix];
+      cur_h  = relAng(sx, sy, bx, by);
+      have_h = true;
+      sx = bx;
+      sy = by;
     }
   }
 
