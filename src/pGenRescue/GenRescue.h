@@ -44,8 +44,10 @@ class GenRescue : public AppCastingMOOSApp
   // behind the bow is penalized for the turn it would take to reach.
   // factors[j] is an opponent-contest multiplier on vertex j's score
   // (1.0 = neutral; <1 boosts a contested swimmer's priority).
+  // mults[j] is how many swimmers visit-point j represents (>=1), so a
+  // coverage-merged pack still contributes its full density.
   XYSegList clusterPath(XYSegList swim_pts, double sx, double sy, double sh,
-                        std::vector<double> factors);
+                        std::vector<double> factors, std::vector<double> mults);
 
   // Time (seconds) for a craft at (px,py) heading ph, moving at the
   // given speed, to reach (tx,ty): straight-line travel + turn time.
@@ -61,6 +63,12 @@ class GenRescue : public AppCastingMOOSApp
   std::string contestVerdict(double tx, double ty, double &factor, double &margin);
   // True if at least one opponent contact is fresh (not stale).
   bool haveFreshOpponent();
+
+  // Pull a point to sit at least m_boundary_margin inside the rescue
+  // region, so a hard turn near the edge can't carry the boat out of
+  // bounds (a disqualification). No-op if the region is unknown or the
+  // point is already safely interior.
+  XYPoint insetIntoRegion(double x, double y);
 
  private: // Config variables
   std::string m_vname;
@@ -79,6 +87,18 @@ class GenRescue : public AppCastingMOOSApp
   //                 set <= 0 to ignore heading entirely (recovers idea #1)
   double m_speed;
   double m_turn_rate;
+
+  // Coverage-reduction tuning (idea B). Before ordering, swimmers are
+  // collapsed to a minimal set of visit points such that every swimmer
+  // is within m_cover_range of one. Detection reaches 25m, so a visit
+  // point covers its near neighbors without a separate waypoint.
+  //   set to 0 to disable (every swimmer becomes its own visit point)
+  double m_cover_range;
+
+  // Keep planned waypoints at least this many meters inside the rescue
+  // region boundary, so turn overshoot can't take the boat out of
+  // bounds (= disqualification). 0 disables the inset.
+  double m_boundary_margin;
 
   // Opponent-aware contest tuning (idea A). All dormant when no fresh
   // opponent contact exists (then behavior == idea #1/#5 exactly).
@@ -136,6 +156,11 @@ class GenRescue : public AppCastingMOOSApp
   // Last time we regenerated the path, for the opponent-driven
   // periodic replan in Iterate().
   double m_last_replan_utc;
+
+  // The rescue-region boundary (from RESCUE_REGION). Waypoints are kept
+  // inside it by m_boundary_margin to avoid out-of-bounds breaches.
+  XYPolygon m_region;
+  bool      m_region_set;
 };
 
 #endif 

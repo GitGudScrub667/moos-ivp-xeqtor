@@ -44,6 +44,13 @@ GenRescue::GenRescue()
   m_speed     = 1.2;       // m/s: assumed transit speed (survey speed)
   m_turn_rate = 30;        // deg/s: <= 0 disables the heading penalty
 
+  // Coverage-reduction tuning (starting value; 0 disables).
+  m_cover_range = 10;      // m: a visit point covers swimmers within this
+
+  // Boundary safety (starting value; 0 disables).
+  m_boundary_margin = 10;  // m: keep waypoints this far inside the region
+  m_region_set = false;
+
   // Opponent-aware contest tuning (starting values; tune vs 2 boats).
   m_lose_margin     = 8;   // s: skip a swimmer the opponent beats us to by >this
   m_contest_window  = 10;  // s: within this ETA margin -> contested
@@ -86,6 +93,8 @@ bool GenRescue::OnNewMail(MOOSMSG_LIST &NewMail)
     }
     else if(key == "NODE_REPORT")
       handled = handleMailNodeReport(sval);
+    else if(key == "RESCUE_REGION")
+      handled = handleMailRescueRegion(sval);
 
     else if(key != "APPCAST_REQ") // handle by AppCastingMOOSApp
       handled = false;
@@ -172,6 +181,7 @@ void GenRescue::RegisterVariables()
   Register("NAV_Y", 0);
   Register("NAV_HEADING", 0);
   Register("NODE_REPORT", 0);
+  Register("RESCUE_REGION", 0);
 }
 
 
@@ -292,6 +302,54 @@ bool GenRescue::handleMailNodeReport(string str)
 }
 
 //---------------------------------------------------------
+// Procedure: handleMailRescueRegion()
+//   Ingest the rescue-region boundary so we can keep waypoints inside it.
+
+bool GenRescue::handleMailRescueRegion(string str)
+{
+  XYPolygon poly = string2Poly(str);
+  if(poly.size() < 3)
+    return(false);
+
+  m_region     = poly;
+  m_region_set = true;
+  return(true);
+}
+
+//---------------------------------------------------------
+// Procedure: insetIntoRegion()
+//   Return (x,y) moved to sit at least m_boundary_margin inside the
+//   region. A no-op if the region is unknown, the margin is off, or the
+//   point is already safely interior.
+
+XYPoint GenRescue::insetIntoRegion(double x, double y)
+{
+  if(!m_region_set || (m_boundary_margin <= 0))
+    return(XYPoint(x, y));
+
+  bool   inside = m_region.contains(x, y);
+  double d      = m_region.dist_to_poly(x, y);   // distance to boundary
+  if(inside && (d >= m_boundary_margin))
+    return(XYPoint(x, y));                        // already safe
+
+  double rx, ry;
+  if(!m_region.closest_point_on_poly(x, y, rx, ry))
+    return(XYPoint(x, y));
+
+  // Inward unit direction (away from the edge for an interior point,
+  // toward the edge for an exterior one).
+  double ux = inside ? (x - rx) : (rx - x);
+  double uy = inside ? (y - ry) : (ry - y);
+  double mag = distPointToPoint(0, 0, ux, uy);
+  if(mag < 1e-6)
+    return(XYPoint(x, y));                        // on the boundary; leave it
+
+  ux /= mag;
+  uy /= mag;
+  return(XYPoint(rx + (ux * m_boundary_margin), ry + (uy * m_boundary_margin)));
+}
+
+//---------------------------------------------------------
 // Procedure: etaToPoint()
 //   Seconds for a craft at (px,py) heading ph at the given speed to
 //   reach (tx,ty): straight-line travel time plus the time to turn
@@ -397,11 +455,10 @@ bool GenRescue::haveFreshOpponent()
 
 void GenRescue::postShortestPath()
 {
-  // Build the candidate set from the swimmers we know about. Each gets
-  // an opponent-contest factor; swimmers the opponent clearly beats us
-  // to ("LOST") are dropped so we don't waste travel on them.
-  XYSegList      swim_pts;
-  vector<double> factors;
+  // Stage 1 (idea A): contest filter. Each swimmer gets an opponent
+  // factor; swimmers the opponent clearly beats us to ("LOST") are
+  // dropped so we don't waste travel on them.
+  vector<double> sx_list, sy_list, f_list;
   map<string, XYPoint>::iterator it;
   for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
     XYPoint pt = it->second;
@@ -409,18 +466,61 @@ void GenRescue::postShortestPath()
     string  verdict = contestVerdict(pt.x(), pt.y(), factor, margin);
     if(verdict == "LOST")
       continue;
-    swim_pts.add_vertex(pt.x(), pt.y());
-    factors.push_back(factor);
+    sx_list.push_back(pt.x());
+    sy_list.push_back(pt.y());
+    f_list.push_back(factor);
   }
 
   // Safety net: never idle. If the contest filter dropped everyone,
   // re-add all swimmers with neutral factors and go after them anyway.
-  if(swim_pts.size() == 0) {
+  if(sx_list.empty()) {
     for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
       XYPoint pt = it->second;
-      swim_pts.add_vertex(pt.x(), pt.y());
-      factors.push_back(1.0);
+      sx_list.push_back(pt.x());
+      sy_list.push_back(pt.y());
+      f_list.push_back(1.0);
     }
+  }
+
+  // Stage 2 (idea B): coverage reduction. Collapse the survivors to a
+  // minimal set of visit points so every swimmer is within
+  // m_cover_range of one. A covered swimmer needs no waypoint of its
+  // own -- the boat sweeps through its detection ring in passing. Each
+  // visit point inherits the strongest (lowest) factor it covers and
+  // counts a multiplicity (how many swimmers it stands in for) so the
+  // cluster density below still reflects true swimmer counts.
+  vector<double> kx, ky, kf, km;
+  for(unsigned int i=0; i<sx_list.size(); i++) {
+    int cover_ix = -1;
+    for(unsigned int j=0; j<kx.size(); j++) {
+      if(distPointToPoint(sx_list[i], sy_list[i], kx[j], ky[j]) <= m_cover_range) {
+        cover_ix = (int)j;
+        break;
+      }
+    }
+    if(cover_ix >= 0) {
+      if(f_list[i] < kf[cover_ix])
+        kf[cover_ix] = f_list[i];
+      km[cover_ix] += 1.0;
+    }
+    else {
+      kx.push_back(sx_list[i]);
+      ky.push_back(sy_list[i]);
+      kf.push_back(f_list[i]);
+      km.push_back(1.0);
+    }
+  }
+
+  // Stage 3: assemble the candidate seglist + aligned factors + mults.
+  // Each visit point is pulled safely inside the region boundary first,
+  // so a hard turn there can't carry the boat out of bounds.
+  XYSegList      swim_pts;
+  vector<double> factors, mults;
+  for(unsigned int i=0; i<kx.size(); i++) {
+    XYPoint vp = insetIntoRegion(kx[i], ky[i]);
+    swim_pts.add_vertex(vp.x(), vp.y());
+    factors.push_back(kf[i]);
+    mults.push_back(km[i]);
   }
 
   // Order the swimmer points into a short tour, starting from
@@ -428,7 +528,7 @@ void GenRescue::postShortestPath()
   // is travel+turn time discounted by local swimmer density (and by
   // the contest factor), so we dive into packs first, avoid U-turns,
   // and prioritize swimmers we can deny the opponent.
-  m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading, factors);
+  m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading, factors, mults);
   m_path.set_label("rescue");
 
   // Draw the planned route in the viewer.
@@ -451,7 +551,7 @@ void GenRescue::postShortestPath()
 //   nearby swimmer. With m_cluster_weight = 0 it reduces to greedy.
 
 XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy, double sh,
-                                 vector<double> factors)
+                                 vector<double> factors, vector<double> mults)
 {
   unsigned int i, j, k, vsize = swim_pts.size();
 
@@ -492,18 +592,21 @@ XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy, doubl
       }
       double cost = travel_time + turn_time;
 
-      // Count OTHER still-unvisited swimmers within radius of j.
-      unsigned int neighbors = 0;
+      // Local density = number of OTHER still-unvisited swimmers near j.
+      // Visit points carry a multiplicity, so a coverage-merged pack
+      // contributes its full swimmer count (mults[j]-1 for the swimmers
+      // sharing j's own visit point, plus the neighbors' multiplicities).
+      double density = ((j < mults.size()) ? (mults[j] - 1.0) : 0.0);
       for(k=0; k<vsize; k++) {
         if((k == j) || visited[k])
           continue;
         if(distPointToPoint(vx[j], vy[j], vx[k], vy[k]) <= m_cluster_radius)
-          neighbors++;
+          density += ((k < mults.size()) ? mults[k] : 1.0);
       }
 
       // Discount the time-to-target by local density, then apply the
       // opponent-contest factor (1.0 when no opponent / not contested).
-      double score = cost / (1.0 + (m_cluster_weight * neighbors));
+      double score = cost / (1.0 + (m_cluster_weight * density));
       if(j < factors.size())
         score = score * factors[j];
 
@@ -581,6 +684,10 @@ bool GenRescue::buildReport()
          << " / " << doubleToStringX(m_cluster_weight,2)              << endl;
   m_msgs << "  Speed / turn rate:        " << doubleToStringX(m_speed,2)
          << " m/s / " << doubleToStringX(m_turn_rate,1) << " deg/s"   << endl;
+  m_msgs << "  Cover range:              " << doubleToStringX(m_cover_range,1)
+         << " m"                                                      << endl;
+  m_msgs << "  Boundary margin:          " << doubleToStringX(m_boundary_margin,1)
+         << " m  (region " << (m_region_set ? "known" : "unknown") << ")" << endl;
   m_msgs << endl;
 
   // --- Section 2: Rescue progress (the scoreboard) ---
@@ -637,7 +744,8 @@ bool GenRescue::buildReport()
       m_msgs << "  range " << doubleToStringX(distPointToPoint(m_nav_x,m_nav_y,fx,fy),0) << " m";
     m_msgs << endl;
   }
-  m_msgs << "  Path legs:        " << m_path.size()                   << endl;
+  m_msgs << "  Path legs:        " << m_path.size()
+         << "  (visit points; " << m_swimmers.size() << " swimmers covered)" << endl;
   m_msgs << endl;
 
   // --- Section 3: Active swimmers (id | location | range-from-ownship) ---
