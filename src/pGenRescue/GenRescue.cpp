@@ -47,8 +47,9 @@ GenRescue::GenRescue()
   // Coverage-reduction tuning (starting value; 0 disables).
   m_cover_range = 10;      // m: a visit point covers swimmers within this
 
-  // Boundary safety (starting value; 0 disables).
-  m_boundary_margin = 10;  // m: keep waypoints this far inside the region
+  // Boundary safety (starting values; 0 disables).
+  m_boundary_margin = 5;   // m: base inset (small -> hug swimmers on safe passes)
+  m_overshoot_max   = 8;   // m: extra inset for a 180-deg turn (scaled by angle)
   m_region_set = false;
 
   // Opponent-aware contest tuning (starting values; tune vs 2 boats).
@@ -322,14 +323,14 @@ bool GenRescue::handleMailRescueRegion(string str)
 //   region. A no-op if the region is unknown, the margin is off, or the
 //   point is already safely interior.
 
-XYPoint GenRescue::insetIntoRegion(double x, double y)
+XYPoint GenRescue::insetIntoRegion(double x, double y, double margin)
 {
-  if(!m_region_set || (m_boundary_margin <= 0))
+  if(!m_region_set || (margin <= 0))
     return(XYPoint(x, y));
 
   bool   inside = m_region.contains(x, y);
   double d      = m_region.dist_to_poly(x, y);   // distance to boundary
-  if(inside && (d >= m_boundary_margin))
+  if(inside && (d >= margin))
     return(XYPoint(x, y));                        // already safe
 
   double rx, ry;
@@ -346,7 +347,43 @@ XYPoint GenRescue::insetIntoRegion(double x, double y)
 
   ux /= mag;
   uy /= mag;
-  return(XYPoint(rx + (ux * m_boundary_margin), ry + (uy * m_boundary_margin)));
+  return(XYPoint(rx + (ux * margin), ry + (uy * margin)));
+}
+
+//---------------------------------------------------------
+// Procedure: tightenForTurns()
+//   Re-inset each waypoint of an ordered path. A sharp turn overshoots
+//   more, so the inset grows with the turn angle at that waypoint.
+
+XYSegList GenRescue::tightenForTurns(XYSegList path)
+{
+  unsigned int n = path.size();
+  if((n == 0) || !m_region_set)
+    return(path);
+
+  XYSegList out;
+  double px = m_nav_x;     // the boat is the "previous" point for vertex 0
+  double py = m_nav_y;
+
+  for(unsigned int i=0; i<n; i++) {
+    double cx = path.get_vx(i);
+    double cy = path.get_vy(i);
+
+    // Turn angle here: 0 = straight through, 180 = full reversal.
+    double turn = 0;
+    if((i+1) < n) {
+      double in_brg  = relAng(px, py, cx, cy);
+      double out_brg = relAng(cx, cy, path.get_vx(i+1), path.get_vy(i+1));
+      turn = angleDiff(in_brg, out_brg);
+    }
+
+    double margin = m_boundary_margin + (m_overshoot_max * (turn / 180.0));
+    XYPoint w = insetIntoRegion(cx, cy, margin);
+    out.add_vertex(w.x(), w.y());
+    px = w.x();
+    py = w.y();
+  }
+  return(out);
 }
 
 //---------------------------------------------------------
@@ -512,13 +549,12 @@ void GenRescue::postShortestPath()
   }
 
   // Stage 3: assemble the candidate seglist + aligned factors + mults.
-  // Each visit point is pulled safely inside the region boundary first,
-  // so a hard turn there can't carry the boat out of bounds.
+  // True swimmer coordinates are used for ordering; the boundary inset
+  // is applied afterward (tightenForTurns) once turn angles are known.
   XYSegList      swim_pts;
   vector<double> factors, mults;
   for(unsigned int i=0; i<kx.size(); i++) {
-    XYPoint vp = insetIntoRegion(kx[i], ky[i]);
-    swim_pts.add_vertex(vp.x(), vp.y());
+    swim_pts.add_vertex(kx[i], ky[i]);
     factors.push_back(kf[i]);
     mults.push_back(km[i]);
   }
@@ -529,6 +565,10 @@ void GenRescue::postShortestPath()
   // the contest factor), so we dive into packs first, avoid U-turns,
   // and prioritize swimmers we can deny the opponent.
   m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading, factors, mults);
+
+  // Pull waypoints inside the boundary, more where the tour turns hard,
+  // so turn overshoot can never carry the boat out of bounds.
+  m_path = tightenForTurns(m_path);
   m_path.set_label("rescue");
 
   // Draw the planned route in the viewer.
@@ -687,7 +727,8 @@ bool GenRescue::buildReport()
   m_msgs << "  Cover range:              " << doubleToStringX(m_cover_range,1)
          << " m"                                                      << endl;
   m_msgs << "  Boundary margin:          " << doubleToStringX(m_boundary_margin,1)
-         << " m  (region " << (m_region_set ? "known" : "unknown") << ")" << endl;
+         << " +" << doubleToStringX(m_overshoot_max,1) << "/turn m  (region "
+         << (m_region_set ? "known" : "unknown") << ")"               << endl;
   m_msgs << endl;
 
   // --- Section 2: Rescue progress (the scoreboard) ---

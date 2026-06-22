@@ -64,11 +64,16 @@ class GenRescue : public AppCastingMOOSApp
   // True if at least one opponent contact is fresh (not stale).
   bool haveFreshOpponent();
 
-  // Pull a point to sit at least m_boundary_margin inside the rescue
-  // region, so a hard turn near the edge can't carry the boat out of
-  // bounds (a disqualification). No-op if the region is unknown or the
-  // point is already safely interior.
-  XYPoint insetIntoRegion(double x, double y);
+  // Pull a point to sit at least 'margin' meters inside the rescue
+  // region, so a turn near the edge can't carry the boat out of bounds
+  // (a disqualification). No-op if the region is unknown or the point
+  // is already safely interior.
+  XYPoint insetIntoRegion(double x, double y, double margin);
+
+  // Re-inset an ordered path's waypoints away from the boundary, more
+  // aggressively where the tour turns hard (a sharp turn overshoots
+  // more). Returns the tightened path.
+  XYSegList tightenForTurns(XYSegList path);
 
  private: // Config variables
   std::string m_vname;
@@ -98,7 +103,11 @@ class GenRescue : public AppCastingMOOSApp
   // Keep planned waypoints at least this many meters inside the rescue
   // region boundary, so turn overshoot can't take the boat out of
   // bounds (= disqualification). 0 disables the inset.
+  //   m_boundary_margin : base inset applied to every waypoint
+  //   m_overshoot_max   : extra inset added for a full 180-deg turn,
+  //                       scaled down for gentler turns
   double m_boundary_margin;
+  double m_overshoot_max;
 
   // Opponent-aware contest tuning (idea A). All dormant when no fresh
   // opponent contact exists (then behavior == idea #1/#5 exactly).
