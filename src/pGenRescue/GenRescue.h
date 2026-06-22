@@ -37,8 +37,20 @@ class GenRescue : public AppCastingMOOSApp
   void postShortestPath();
   void postNullPath();
 
+  // Cluster-aware ordering: like a greedy nearest-neighbor tour, but
+  // each candidate's distance is discounted by how many other swimmers
+  // sit nearby, so the boat prefers to dive into dense packs first.
+  XYSegList clusterPath(XYSegList swim_pts, double sx, double sy);
+
  private: // Config variables
   std::string m_vname;
+
+  // Cluster-aware path tuning (hardcoded; mission .moos is staff-owned
+  // so we keep these in the app and tune by rebuild).
+  //   m_cluster_radius : how close (m) counts as a swimmer's "neighbor"
+  //   m_cluster_weight : how strongly density discounts distance (0 = plain greedy)
+  double m_cluster_radius;
+  double m_cluster_weight;
   
  private: // State variables
   XYSegList  m_path;

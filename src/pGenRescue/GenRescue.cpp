@@ -30,6 +30,10 @@ GenRescue::GenRescue()
   m_nav_x_set = 0;
   m_nav_y_set = 0;
   m_plan_pending = false;
+
+  // Cluster-aware path tuning (starting values; tune by rebuild).
+  m_cluster_radius = 20;   // meters: radius for counting neighbors
+  m_cluster_weight = 0.6;  // 0 = plain greedy; higher = favor packs more
 }
 
 //---------------------------------------------------------
@@ -236,9 +240,10 @@ void GenRescue::postShortestPath()
     swim_pts.add_vertex(pt.x(), pt.y());
   }
 
-  // Order the swimmer points into a short tour, greedily, starting
-  // from ownship's current position (nearest-neighbor ordering).
-  m_path = greedyPath(swim_pts, m_nav_x, m_nav_y);
+  // Order the swimmer points into a short tour, starting from
+  // ownship's position. Like nearest-neighbor, but distance is
+  // discounted by local swimmer density so we dive into packs first.
+  m_path = clusterPath(swim_pts, m_nav_x, m_nav_y);
   m_path.set_label("rescue");
 
   // Draw the planned route in the viewer.
@@ -250,6 +255,70 @@ void GenRescue::postShortestPath()
 
   Notify(update_var, update_str);
   reportEvent("SURVEY_UPDATE=" + update_str);
+}
+
+//---------------------------------------------------------
+// Procedure: clusterPath()
+//   Like greedyPath (nearest-neighbor), but at each step a
+//   candidate's distance is DISCOUNTED by how many other unvisited
+//   swimmers sit within m_cluster_radius of it. This biases the boat
+//   toward diving into dense packs first instead of chasing a lone
+//   nearby swimmer. With m_cluster_weight = 0 it reduces to greedy.
+
+XYSegList GenRescue::clusterPath(XYSegList swim_pts, double sx, double sy)
+{
+  unsigned int i, j, k, vsize = swim_pts.size();
+
+  // Pull vertices into plain arrays + a visited flag (mirrors greedyPath).
+  vector<double> vx, vy;
+  vector<bool>   visited;
+  for(i=0; i<vsize; i++) {
+    vx.push_back(swim_pts.get_vx(i));
+    vy.push_back(swim_pts.get_vy(i));
+    visited.push_back(false);
+  }
+
+  XYSegList new_segl;
+
+  // Build the tour one vertex at a time.
+  for(i=0; i<vsize; i++) {
+    double       best_score = -1;   // -1 = not yet set
+    unsigned int best_ix    = 0;
+
+    for(j=0; j<vsize; j++) {
+      if(visited[j])
+        continue;
+
+      double d = distPointToPoint(sx, sy, vx[j], vy[j]);
+
+      // Count OTHER still-unvisited swimmers within radius of j.
+      unsigned int neighbors = 0;
+      for(k=0; k<vsize; k++) {
+        if((k == j) || visited[k])
+          continue;
+        if(distPointToPoint(vx[j], vy[j], vx[k], vy[k]) <= m_cluster_radius)
+          neighbors++;
+      }
+
+      // Discount distance by local density. neighbors == 0 -> raw dist.
+      double score = d / (1.0 + (m_cluster_weight * neighbors));
+
+      if((best_score < 0) || (score < best_score)) {
+        best_score = score;
+        best_ix    = j;
+      }
+    }
+
+    // Commit the winning vertex and step the "current position" to it.
+    if(best_score >= 0) {
+      new_segl.add_vertex(vx[best_ix], vy[best_ix]);
+      visited[best_ix] = true;
+      sx = vx[best_ix];
+      sy = vy[best_ix];
+    }
+  }
+
+  return(new_segl);
 }
 
 //---------------------------------------------------------
