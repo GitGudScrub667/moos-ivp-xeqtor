@@ -42,17 +42,18 @@ GenRescue::GenRescue()
 
   // Time-to-target tuning (starting values; tune by rebuild).
   m_speed     = 1.2;       // m/s: assumed transit speed (survey speed)
-  m_turn_rate = 30;        // deg/s: <= 0 disables the heading penalty
+  m_turn_rate = 20;        // deg/s: real-boat turn rate; <= 0 disables heading penalty
 
   // Coverage-reduction tuning (starting value; 0 disables).
-  m_cover_range = 10;      // m: a visit point covers swimmers within this
+  m_cover_range = 6;       // m: a visit point covers swimmers within this
 
   // Boundary safety (starting values; 0 disables).
   m_boundary_margin = 5;   // m: base inset (small -> hug swimmers on safe passes)
-  m_overshoot_max   = 8;   // m: extra inset for a 180-deg turn (scaled by angle)
+  m_overshoot_max   = 18;  // m: extra inset for a 180-deg turn (real boat arcs wide)
   m_region_set = false;
 
   m_use_two_opt = true;    // uncross the tour after ordering
+  m_use_or_opt  = true;    // relocate short runs after uncrossing
 
   // Opponent-aware contest tuning (starting values; tune vs 2 boats).
   m_lose_margin     = 8;   // s: skip a swimmer the opponent beats us to by >this
@@ -125,10 +126,13 @@ bool GenRescue::Iterate()
 {
   AppCastingMOOSApp::Iterate();
 
-  // Opponent reactivity: while a fresh opponent contact exists, replan
-  // periodically so our contest decisions track the opponent's motion.
-  // Dormant (no extra replanning) when no opponent is around.
-  if(!m_plan_pending && (m_swimmers.size() > 0) && haveFreshOpponent()) {
+  // Periodic replan / re-sweep: while any swimmer remains un-rescued,
+  // regenerate the tour every m_replan_interval seconds. Capture is a
+  // coin toss, so a single pass can miss a swimmer; because missed
+  // swimmers stay in m_swimmers, each replan re-tours them and the boat
+  // comes back to try again. Also keeps target/contest decisions fresh
+  // as ownship and any opponent move.
+  if(!m_plan_pending && (m_swimmers.size() > 0)) {
     if((MOOSTime() - m_last_replan_utc) >= m_replan_interval)
       m_plan_pending = true;
   }
@@ -567,6 +571,69 @@ XYSegList GenRescue::twoOptImprove(XYSegList path)
 }
 
 //---------------------------------------------------------
+// Procedure: orOptImprove()
+//   Relocate a run of 1-3 consecutive waypoints to a better slot
+//   (orientation kept; reversal is 2-opt's job) whenever it lowers
+//   total traversal time. Waypoint 0 stays pinned.
+
+XYSegList GenRescue::orOptImprove(XYSegList path)
+{
+  unsigned int n = path.size();
+  if(!m_use_or_opt || (n < 3))
+    return(path);
+
+  vector<double> vx, vy;
+  for(unsigned int i=0; i<n; i++) {
+    vx.push_back(path.get_vx(i));
+    vy.push_back(path.get_vy(i));
+  }
+
+  bool         improved = true;
+  unsigned int guard    = 0;
+  while(improved && (guard < 100)) {
+    improved = false;
+    guard++;
+    double base = pathTime(vx, vy);
+
+    // Try moving a run of length L (1..3), starting at i (>=1, pinned 0).
+    for(unsigned int L=1; (L<=3) && (L<n); L++) {
+      for(unsigned int i=1; (i+L)<=n; i++) {
+        // The run being moved, and the remaining tour without it.
+        vector<double> sx(vx.begin()+i, vx.begin()+i+L);
+        vector<double> sy(vy.begin()+i, vy.begin()+i+L);
+        vector<double> rx, ry;
+        for(unsigned int t=0; t<n; t++) {
+          if((t < i) || (t >= i+L)) {
+            rx.push_back(vx[t]);
+            ry.push_back(vy[t]);
+          }
+        }
+        // Reinsert the run at each gap p (>=1 keeps waypoint 0 pinned).
+        for(unsigned int p=1; p<=rx.size(); p++) {
+          vector<double> cx, cy;
+          for(unsigned int t=0; t<p; t++)        { cx.push_back(rx[t]); cy.push_back(ry[t]); }
+          for(unsigned int t=0; t<L; t++)        { cx.push_back(sx[t]); cy.push_back(sy[t]); }
+          for(unsigned int t=p; t<rx.size(); t++){ cx.push_back(rx[t]); cy.push_back(ry[t]); }
+
+          double tt = pathTime(cx, cy);
+          if((tt + 1e-6) < base) {
+            vx = cx;
+            vy = cy;
+            base = tt;
+            improved = true;
+          }
+        }
+      }
+    }
+  }
+
+  XYSegList out;
+  for(unsigned int i=0; i<vx.size(); i++)
+    out.add_vertex(vx[i], vy[i]);
+  return(out);
+}
+
+//---------------------------------------------------------
 // Procedure: postShortestPath()
 
 void GenRescue::postShortestPath()
@@ -645,9 +712,11 @@ void GenRescue::postShortestPath()
   // and prioritize swimmers we can deny the opponent.
   m_path = clusterPath(swim_pts, m_nav_x, m_nav_y, m_nav_heading, factors, mults);
 
-  // Uncross the greedy tour (2-opt) to cut traversal time and remove
-  // U-turns, before the boundary inset reads the final turn angles.
+  // Uncross the greedy tour (2-opt), then relocate runs (Or-opt), to cut
+  // traversal time and remove U-turns, before the boundary inset reads
+  // the final turn angles.
   m_path = twoOptImprove(m_path);
+  m_path = orOptImprove(m_path);
 
   // Pull waypoints inside the boundary, more where the tour turns hard,
   // so turn overshoot can never carry the boat out of bounds.
@@ -812,7 +881,10 @@ bool GenRescue::buildReport()
   m_msgs << "  Boundary margin:          " << doubleToStringX(m_boundary_margin,1)
          << " +" << doubleToStringX(m_overshoot_max,1) << "/turn m  (region "
          << (m_region_set ? "known" : "unknown") << ")"               << endl;
-  m_msgs << "  2-opt tour cleanup:       " << (m_use_two_opt ? "on" : "off") << endl;
+  m_msgs << "  Tour cleanup:             2-opt " << (m_use_two_opt ? "on" : "off")
+         << ", Or-opt " << (m_use_or_opt ? "on" : "off")              << endl;
+  m_msgs << "  Re-sweep interval:        every " << doubleToStringX(m_replan_interval,1)
+         << " s"                                                       << endl;
   m_msgs << endl;
 
   // --- Section 2: Rescue progress (the scoreboard) ---

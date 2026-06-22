@@ -79,6 +79,10 @@ class GenRescue : public AppCastingMOOSApp
   // time (travel + turning), pinning waypoint 0 so the contest-first
   // pick is preserved. Returns the improved path.
   XYSegList twoOptImprove(XYSegList path);
+  // Or-opt local search: relocate a run of 1-3 consecutive waypoints to
+  // a better position (no reversal), again minimizing traversal time
+  // and pinning waypoint 0. Complements 2-opt.
+  XYSegList orOptImprove(XYSegList path);
   // Total time to traverse a waypoint list from ownship's pose, using
   // the same travel+turn model as the ordering cost.
   double pathTime(const std::vector<double> &vx, const std::vector<double> &vy);
@@ -117,9 +121,12 @@ class GenRescue : public AppCastingMOOSApp
   double m_boundary_margin;
   double m_overshoot_max;
 
-  // 2-opt tour cleanup (idea C). When true, the ordered tour is
-  // uncrossed to cut traversal time; false leaves clusterPath's order.
+  // Tour cleanup local search. When true, the ordered tour is improved
+  // to cut traversal time; false leaves clusterPath's order.
+  //   m_use_two_opt : uncross segments (idea C)
+  //   m_use_or_opt  : relocate short runs of waypoints
   bool m_use_two_opt;
+  bool m_use_or_opt;
 
   // Opponent-aware contest tuning (idea A). All dormant when no fresh
   // opponent contact exists (then behavior == idea #1/#5 exactly).
@@ -129,8 +136,9 @@ class GenRescue : public AppCastingMOOSApp
   //                       "contested" -> boost its priority to deny it
   //   m_contest_boost   : score multiplier for a contested swimmer (<1)
   //   m_contact_max_age : ignore opponent contacts older than this (s)
-  //   m_replan_interval : while an opponent is known, replan at least
-  //                       this often (s) so we react as they move
+  //   m_replan_interval : replan at least this often (s) while swimmers
+  //                       remain -- re-sweeps swimmers missed on a pass
+  //                       (capture is probabilistic) and tracks opponent
   double m_lose_margin;
   double m_contest_window;
   double m_contest_boost;
