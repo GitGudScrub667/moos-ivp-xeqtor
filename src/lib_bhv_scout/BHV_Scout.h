@@ -48,7 +48,13 @@ protected:
   void         buildGrid();           // lay grid over the region (once)
   void         markSwept(double px, double py);  // mark cells near (px,py)
   void         markVehiclesSwept();   // mark cells near ALL known vehicles
-  bool         pickNearestUncovered(double& rx, double& ry); // next target
+
+  // Boustrophedon sweep (Step 2): order the cells into a serpentine
+  // lawnmower path so the scout sweeps in clean rows instead of darting
+  // to whatever cell is nearest. Covered cells are skipped, so areas any
+  // vehicle already visited are not re-searched.
+  void         buildSweepOrder();              // build m_order (once, after grid)
+  bool         pickNextInOrder(double& rx, double& ry); // next unswept in order
 
 protected: // State variables
   double   m_osx;
@@ -68,6 +74,12 @@ protected: // State variables
   std::vector<double>  m_cell_x;
   std::vector<double>  m_cell_y;
   std::vector<bool>    m_cell_covered;
+
+  // Serpentine (boustrophedon) visit order over the grid cells, plus a
+  // cursor into it. Built once with the grid; the scout walks the cursor
+  // forward to the next still-unswept cell as it sweeps.
+  std::vector<unsigned int> m_order;
+  unsigned int              m_order_idx;
 
 protected: // Config variables
   double m_capture_radius;

@@ -40,6 +40,7 @@ BHV_Scout::BHV_Scout(IvPDomain gdomain) :
 
   m_pt_set = false;
   m_grid_ready = false;
+  m_order_idx = 0;
 
   addInfoVars("NAV_X, NAV_Y");
   addInfoVars("RESCUE_REGION");
@@ -169,9 +170,9 @@ void BHV_Scout::updateScoutPoint()
   if(m_pt_set)
     return;   // still pursuing a valid (unswept) target
 
-  // Pick the nearest unswept cell as the new target.
+  // Pick the next unswept cell in serpentine order as the new target.
   double rx, ry;
-  if(pickNearestUncovered(rx, ry)) {
+  if(pickNextInOrder(rx, ry)) {
     m_ptx = rx;
     m_pty = ry;
     m_pt_set = true;
@@ -229,8 +230,73 @@ void BHV_Scout::buildGrid()
   }
 
   if(m_cell_x.size() > 0) {
+    buildSweepOrder();
     m_grid_ready = true;
     postEventMessage("Scout grid built: " + uintToString(m_cell_x.size()) + " cells");
+  }
+}
+
+//-----------------------------------------------------------
+// Procedure: buildSweepOrder()
+//   Order the grid cells into a serpentine (boustrophedon) lawnmower
+//   path: sweep in rows along the region's WIDER axis (so each row is
+//   long and there are few turns), and reverse the direction every other
+//   row so the scout snakes back and forth instead of jumping to the row
+//   start. Stored as m_order (cell indices); m_order_idx is the cursor.
+
+void BHV_Scout::buildSweepOrder()
+{
+  m_order.clear();
+  m_order_idx = 0;
+  unsigned int n = m_cell_x.size();
+  if(n == 0)
+    return;
+
+  double minx = m_cell_x[0], maxx = minx;
+  double miny = m_cell_y[0], maxy = miny;
+  for(unsigned int i=1; i<n; i++) {
+    minx = fmin(minx, m_cell_x[i]); maxx = fmax(maxx, m_cell_x[i]);
+    miny = fmin(miny, m_cell_y[i]); maxy = fmax(maxy, m_cell_y[i]);
+  }
+
+  double step = (m_sweep_radius > 0) ? m_sweep_radius : 25;
+
+  // Sweep along the wider axis -> long rows, fewer turns.
+  bool sweep_x = ((maxx - minx) >= (maxy - miny));
+
+  // Walk row by row along the stepping (narrower) axis.
+  double rmin = sweep_x ? miny : minx;
+  double rmax = sweep_x ? maxy : maxx;
+  int rownum = 0;
+  for(double r = rmin; r <= rmax + 1e-6; r += step) {
+    // Gather the cells belonging to this row (within half a step of r).
+    vector<unsigned int> row;
+    for(unsigned int i=0; i<n; i++) {
+      double rc = sweep_x ? m_cell_y[i] : m_cell_x[i];
+      if(fabs(rc - r) <= (step / 2.0))
+        row.push_back(i);
+    }
+    // Sort the row by the sweep coordinate, ascending (selection sort;
+    // rows are tiny so this is plenty fast and easy to read).
+    for(unsigned int a=0; a<row.size(); a++) {
+      unsigned int best = a;
+      for(unsigned int b=a+1; b<row.size(); b++) {
+        double sb    = sweep_x ? m_cell_x[row[b]]    : m_cell_y[row[b]];
+        double sbest = sweep_x ? m_cell_x[row[best]] : m_cell_y[row[best]];
+        if(sb < sbest) best = b;
+      }
+      unsigned int tmp = row[a]; row[a] = row[best]; row[best] = tmp;
+    }
+    // Serpentine: even rows left-to-right, odd rows right-to-left.
+    if((rownum % 2) == 0) {
+      for(unsigned int a=0; a<row.size(); a++)
+        m_order.push_back(row[a]);
+    }
+    else {
+      for(int a=(int)row.size()-1; a>=0; a--)
+        m_order.push_back(row[a]);
+    }
+    rownum++;
   }
 }
 
@@ -273,17 +339,21 @@ void BHV_Scout::markVehiclesSwept()
 }
 
 //-----------------------------------------------------------
-// Procedure: pickNearestUncovered()
-//   Find the nearest unswept cell to ownship. Returns false if none.
+// Procedure: pickNextInOrder()
+//   Advance the serpentine cursor to the next still-unswept cell and
+//   return its center. Walks the whole order (wrapping) so cells that
+//   reopened behind the cursor are not missed. Returns false only if the
+//   order is empty.
 
-bool BHV_Scout::pickNearestUncovered(double& rx, double& ry)
+bool BHV_Scout::pickNextInOrder(double& rx, double& ry)
 {
-  if(m_cell_x.empty())
+  if(m_order.empty())
     return(false);
 
-  // If every cell is already covered, start a fresh sweep. Detection is
-  // probabilistic (a single close pass often misses a swimmer), so the
-  // scout keeps re-sweeping rather than idling -- repeat passes find more.
+  // If every cell is covered, start a fresh sweep from the top of the
+  // order. Detection is probabilistic (a single close pass often misses a
+  // swimmer), so the scout re-sweeps rather than idling -- repeat passes
+  // find more.
   bool any_uncovered = false;
   for(unsigned int i=0; i<m_cell_covered.size(); i++) {
     if(!m_cell_covered[i]) { any_uncovered = true; break; }
@@ -291,23 +361,23 @@ bool BHV_Scout::pickNearestUncovered(double& rx, double& ry)
   if(!any_uncovered) {
     for(unsigned int i=0; i<m_cell_covered.size(); i++)
       m_cell_covered[i] = false;
+    m_order_idx = 0;
     postEventMessage("Scout: region fully swept -> re-sweeping");
   }
 
-  // Nearest uncovered cell to ownship.
-  int    best = -1;
-  double bestd = -1;
-  for(unsigned int i=0; i<m_cell_x.size(); i++) {
-    if(m_cell_covered[i])
-      continue;
-    double d = hypot(m_cell_x[i]-m_osx, m_cell_y[i]-m_osy);
-    if((best < 0) || (d < bestd)) { bestd = d; best = (int)i; }
+  // From the cursor, find the next uncovered cell in serpentine order.
+  unsigned int n = m_order.size();
+  for(unsigned int k=0; k<n; k++) {
+    unsigned int pos = (m_order_idx + k) % n;
+    unsigned int ci  = m_order[pos];
+    if(!m_cell_covered[ci]) {
+      m_order_idx = pos;
+      rx = m_cell_x[ci];
+      ry = m_cell_y[ci];
+      return(true);
+    }
   }
-  if(best < 0)
-    return(false);
-  rx = m_cell_x[best];
-  ry = m_cell_y[best];
-  return(true);
+  return(false);
 }
 
 //-----------------------------------------------------------
