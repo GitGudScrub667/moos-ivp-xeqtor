@@ -52,6 +52,8 @@ GenRescue::GenRescue()
   m_overshoot_max   = 18;  // m: extra inset for a 180-deg turn (real boat arcs wide)
   m_region_set = false;
 
+  m_buoy_margin = 9;       // m: clear the strong-avoid zone (inner_dist 6) but stay in detection range
+
   m_use_two_opt = true;    // uncross the tour after ordering
   m_use_or_opt  = true;    // relocate short runs after uncrossing
 
@@ -99,6 +101,8 @@ bool GenRescue::OnNewMail(MOOSMSG_LIST &NewMail)
       handled = handleMailNodeReport(sval);
     else if(key == "RESCUE_REGION")
       handled = handleMailRescueRegion(sval);
+    else if(key == "VIEW_POLYGON")
+      handled = handleMailViewPolygon(sval);
 
     else if(key != "APPCAST_REQ") // handle by AppCastingMOOSApp
       handled = false;
@@ -189,6 +193,7 @@ void GenRescue::RegisterVariables()
   Register("NAV_HEADING", 0);
   Register("NODE_REPORT", 0);
   Register("RESCUE_REGION", 0);
+  Register("VIEW_POLYGON", 0);
 }
 
 
@@ -388,6 +393,114 @@ XYSegList GenRescue::tightenForTurns(XYSegList path)
     out.add_vertex(w.x(), w.y());
     px = w.x();
     py = w.y();
+  }
+  return(out);
+}
+
+//---------------------------------------------------------
+// Procedure: handleMailViewPolygon()
+//   Capture buoy obstacle polygons (those whose label contains "buoy")
+//   so the path planner can keep waypoints clear of them.
+
+bool GenRescue::handleMailViewPolygon(string str)
+{
+  XYPolygon poly = string2Poly(str);
+  if(poly.size() < 3)
+    return(true);                       // not a usable polygon; ignore
+
+  string label = poly.get_label();
+  if(label.find("buoy") == string::npos)
+    return(true);                       // only track buoys
+
+  m_buoys[label] = poly;                 // keyed by label -> repeats update
+  return(true);
+}
+
+//---------------------------------------------------------
+// Procedure: nudgeOffBuoys()
+//   Push any waypoint inside or within m_buoy_margin of a buoy out to
+//   m_buoy_margin beyond the buoy boundary, so the rescue helm's
+//   obstacle-avoidance does not fight the survey waypoint (deadlock).
+
+XYSegList GenRescue::nudgeOffBuoys(XYSegList path)
+{
+  if(m_buoys.empty() || (m_buoy_margin <= 0))
+    return(path);
+
+  // Region centroid: we nudge toward it (region interior) so the moved
+  // waypoint stays in bounds (region is convex) instead of being pushed
+  // outward off the buoy and possibly out of the playing field.
+  double rcx = 0, rcy = 0;
+  bool have_rc = false;
+  if(m_region_set && (m_region.size() >= 3)) {
+    for(unsigned int v=0; v<m_region.size(); v++) {
+      rcx += m_region.get_vx(v);
+      rcy += m_region.get_vy(v);
+    }
+    rcx /= m_region.size();
+    rcy /= m_region.size();
+    have_rc = true;
+  }
+
+  // Without the region we can't nudge toward the interior safely (and an
+  // outward push could go out of bounds), so leave the path unchanged.
+  // The region is known well before the boat deploys, so this only skips
+  // the very first pre-deploy plans.
+  if(!have_rc)
+    return(path);
+
+  XYSegList out;
+  for(unsigned int i=0; i<path.size(); i++) {
+    double wx = path.get_vx(i);
+    double wy = path.get_vy(i);
+
+    map<string, XYPolygon>::iterator it;
+    for(it=m_buoys.begin(); it!=m_buoys.end(); it++) {
+      XYPolygon buoy = it->second;
+      bool   inside = buoy.contains(wx, wy);
+      double dist   = buoy.dist_to_poly(wx, wy);   // distance to boundary
+      if(!inside && (dist >= m_buoy_margin))
+        continue;                                  // already clear of this buoy
+
+      // Buoy center and reach (max vertex distance from center).
+      double bcx = 0, bcy = 0;
+      for(unsigned int v=0; v<buoy.size(); v++) { bcx += buoy.get_vx(v); bcy += buoy.get_vy(v); }
+      bcx /= buoy.size();
+      bcy /= buoy.size();
+      double reach = 0;
+      for(unsigned int v=0; v<buoy.size(); v++) {
+        double d = distPointToPoint(bcx, bcy, buoy.get_vx(v), buoy.get_vy(v));
+        if(d > reach) reach = d;
+      }
+
+      // Push outward along the waypoint's own bearing from the buoy, so
+      // distinct swimmers near the same buoy stay distinct (no collapse)
+      // and the nudged point stays near the real swimmer. If the waypoint
+      // sits at the buoy center, fall back to the interior direction.
+      double ux = wx - bcx, uy = wy - bcy;
+      double mag = distPointToPoint(0, 0, ux, uy);
+      if(mag < 1e-6) { ux = rcx - bcx; uy = rcy - bcy; mag = distPointToPoint(0, 0, ux, uy); }
+      if(mag < 1e-6) { ux = 1; uy = 0; mag = 1; }
+      ux /= mag; uy /= mag;
+
+      double nwx = bcx + ux * (reach + m_buoy_margin);
+      double nwy = bcy + uy * (reach + m_buoy_margin);
+
+      // Keep the nudged waypoint in bounds (clamp toward interior if the
+      // outward push crossed the region edge -- e.g., a buoy near it).
+      XYPoint clamped = insetIntoRegion(nwx, nwy, m_boundary_margin);
+      wx = clamped.x();
+      wy = clamped.y();
+    }
+
+    // Drop near-duplicate waypoints (several swimmers nudged off the same
+    // buoy can land together). Detection range covers the dropped ones.
+    bool dup = false;
+    for(unsigned int k=0; k<out.size(); k++) {
+      if(distPointToPoint(out.get_vx(k), out.get_vy(k), wx, wy) < 3.0) { dup = true; break; }
+    }
+    if(!dup)
+      out.add_vertex(wx, wy);
   }
   return(out);
 }
@@ -721,6 +834,12 @@ void GenRescue::postShortestPath()
   // Pull waypoints inside the boundary, more where the tour turns hard,
   // so turn overshoot can never carry the boat out of bounds.
   m_path = tightenForTurns(m_path);
+
+  // Finally, push any waypoint that landed on/near a buoy obstacle clear
+  // of it, so the helm's avoid-obstacle behavior doesn't deadlock with
+  // the survey waypoint.
+  m_path = nudgeOffBuoys(m_path);
+
   m_path.set_label("rescue");
 
   // Draw the planned route in the viewer.
@@ -881,6 +1000,8 @@ bool GenRescue::buildReport()
   m_msgs << "  Boundary margin:          " << doubleToStringX(m_boundary_margin,1)
          << " +" << doubleToStringX(m_overshoot_max,1) << "/turn m  (region "
          << (m_region_set ? "known" : "unknown") << ")"               << endl;
+  m_msgs << "  Buoys known:              " << m_buoys.size()
+         << "  (nudge margin " << doubleToStringX(m_buoy_margin,1) << " m)" << endl;
   m_msgs << "  Tour cleanup:             2-opt " << (m_use_two_opt ? "on" : "off")
          << ", Or-opt " << (m_use_or_opt ? "on" : "off")              << endl;
   m_msgs << "  Re-sweep interval:        every " << doubleToStringX(m_replan_interval,1)

@@ -34,8 +34,14 @@ class GenRescue : public AppCastingMOOSApp
   bool handleMailFoundSwimmer(std::string);
   bool handleMailRescueRegion(std::string);
   bool handleMailNodeReport(std::string);
+  bool handleMailViewPolygon(std::string);
   void postShortestPath();
   void postNullPath();
+
+  // Push any tour waypoint that lands on/near a buoy obstacle to the
+  // nearest navigable point clear of it (by m_buoy_margin), so the
+  // rescue helm doesn't deadlock between go-to-waypoint and avoid-buoy.
+  XYSegList nudgeOffBuoys(XYSegList path);
 
   // Cluster-aware ordering: like a greedy nearest-neighbor tour, but
   // each candidate's distance is discounted by how many other swimmers
@@ -121,6 +127,11 @@ class GenRescue : public AppCastingMOOSApp
   double m_boundary_margin;
   double m_overshoot_max;
 
+  // Keep tour waypoints at least this far off a buoy obstacle so the
+  // BHV_AvoidObstacle behavior (high pwt, influence to ~14m) doesn't
+  // fight the survey waypoint and deadlock the helm. 0 disables.
+  double m_buoy_margin;
+
   // Tour cleanup local search. When true, the ordered tour is improved
   // to cut traversal time; false leaves clusterPath's order.
   //   m_use_two_opt : uncross segments (idea C)
@@ -190,6 +201,10 @@ class GenRescue : public AppCastingMOOSApp
   // inside it by m_boundary_margin to avoid out-of-bounds breaches.
   XYPolygon m_region;
   bool      m_region_set;
+
+  // Buoy obstacle polygons learned from VIEW_POLYGON (label contains
+  // "buoy"), keyed by label so repeated posts just update in place.
+  std::map<std::string, XYPolygon> m_buoys;
 };
 
 #endif 
