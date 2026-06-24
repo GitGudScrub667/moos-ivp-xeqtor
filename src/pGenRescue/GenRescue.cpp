@@ -153,6 +153,17 @@ bool GenRescue::Iterate()
     m_plan_pending = false;
   }
 
+  // Keep the boat working while any swimmer remains un-rescued. The survey
+  // behavior fires its endflag (RETURN=true) the instant it has VISITED
+  // every waypoint, but a single pass is a coin toss -- visited swimmers
+  // can still be un-rescued. That would latch the boat into RETURNING and
+  // send it home with known swimmers still out there. Forcing RETURN=false
+  // re-activates the perpetual survey so the boat re-tours the misses.
+  // When the last swimmer is finally rescued m_swimmers empties, we stop
+  // overriding, and the boat returns home normally (as in Lab 9).
+  if(m_swimmers.size() > 0)
+    Notify("RETURN", "false");
+
   AppCastingMOOSApp::PostReport();
   return(true);
 }
