@@ -41,11 +41,19 @@ BHV_Scout::BHV_Scout(IvPDomain gdomain) :
   m_pt_set = false;
   m_grid_ready = false;
   m_order_idx = 0;
+  m_pushing = false;
+
+  // COLREGS push tuning (defaults).
+  m_push_enabled      = true;
+  m_push_edge_dist    = 15;   // m: opponent this close to the boundary is push-eligible
+  m_push_engage_range = 55;   // m: ... and this close to ben -> engage
+  m_push_standoff     = 10;   // m: how far interior of the opponent ben aims
 
   addInfoVars("NAV_X, NAV_Y");
   addInfoVars("RESCUE_REGION");
   addInfoVars("SCOUTED_SWIMMER");
-  addInfoVars("NODE_REPORT");   // positions of teammate + opponents
+  addInfoVars("NODE_REPORT");        // positions of teammate + opponents
+  addInfoVars("NODE_REPORT_LOCAL");  // our own report -> learn our team color
 }
 
 //---------------------------------------------------------------
@@ -65,6 +73,14 @@ bool BHV_Scout::setParam(string param, string val)
     handled = setPosDoubleOnString(m_sweep_radius, val);
   else if(param == "tmate")
     handled = setNonWhiteVarOnString(m_tmate, val);
+  else if(param == "push_enabled")
+    handled = setBooleanOnString(m_push_enabled, val);
+  else if(param == "push_edge_dist")
+    handled = setPosDoubleOnString(m_push_edge_dist, val);
+  else if(param == "push_engage_range")
+    handled = setPosDoubleOnString(m_push_engage_range, val);
+  else if(param == "push_standoff")
+    handled = setPosDoubleOnString(m_push_standoff, val);
   else
     handled = false;
 
@@ -115,11 +131,32 @@ IvPFunction *BHV_Scout::onRunState()
     return(0);
   }
   
-  // Part 2: Build the coverage grid once the region is known, and on
-  // every tick mark cells swept by any vehicle (us, teammate, opponents).
+  // Part 2: Build the coverage grid once the region is known, refresh the
+  // tracked vehicles, and mark cells swept by any vehicle (us + contacts).
   if(!m_grid_ready)
     buildGrid();
+  updateContacts();
   markVehiclesSwept();
+
+  // Part 2.5: COLREGS push. If an opponent is hugging the region edge near
+  // us, shoulder it toward the boundary this tick instead of searching.
+  if(m_push_enabled) {
+    double px, py;
+    if(findPushTarget(px, py)) {
+      m_pushing = true;
+      m_ptx = px; m_pty = py; m_pt_set = true;
+      postViewPoint(true);
+      IvPFunction *ipf = buildFunction();
+      if(ipf == 0)
+        postWMessage("Problem Creating the IvP Function");
+      return(ipf);
+    }
+  }
+  // Push just ended -> drop the stale push target so search re-picks fresh.
+  if(m_pushing) {
+    m_pushing = false;
+    m_pt_set  = false;
+  }
 
   // Part 3: Choose / refresh the scout target (nearest unswept cell).
   updateScoutPoint();
@@ -316,9 +353,8 @@ void BHV_Scout::markSwept(double px, double py)
 
 //-----------------------------------------------------------
 // Procedure: markVehiclesSwept()
-//   Mark cells swept by ownship and by the latest NODE_REPORT contact
-//   (teammate or opponent). Sampling NODE_REPORT each tick captures all
-//   vehicles' tracks over time.
+//   Mark cells swept by ownship and by every tracked vehicle (teammate +
+//   opponents). m_contacts is refreshed each tick by updateContacts().
 
 void BHV_Scout::markVehiclesSwept()
 {
@@ -327,15 +363,144 @@ void BHV_Scout::markVehiclesSwept()
 
   markSwept(m_osx, m_osy);   // our own track
 
+  map<string, Contact>::iterator it;
+  for(it=m_contacts.begin(); it!=m_contacts.end(); it++)
+    markSwept(it->second.x, it->second.y);
+}
+
+//-----------------------------------------------------------
+// Procedure: updateContacts()
+//   Refresh the tracked-vehicle map from the latest NODE_REPORT (sampling
+//   each tick rotates through all craft over time), and learn our own team
+//   color from NODE_REPORT_LOCAL.
+
+void BHV_Scout::updateContacts()
+{
+  // Our own team color (string2NodeRecord doesn't parse COLOR -> read spec).
+  if(getBufferIsKnown("NODE_REPORT_LOCAL")) {
+    string c = colorOfReport(getBufferStringVal("NODE_REPORT_LOCAL"));
+    if(c != "")
+      m_my_color = c;
+  }
+
   if(getBufferIsKnown("NODE_REPORT")) {
     string rep = getBufferStringVal("NODE_REPORT");
     if(rep != "") {
       NodeRecord rec = string2NodeRecord(rep);
       string name = rec.getName();
-      if((name != "") && (name != m_us_name))
-        markSwept(rec.getX(), rec.getY());
+      if((name != "") && (name != m_us_name)) {
+        Contact c;
+        c.x       = rec.getX();
+        c.y       = rec.getY();
+        c.heading = rec.getHeading();
+        c.utc     = getBufferCurrTime();
+        c.color   = colorOfReport(rep);
+        m_contacts[name] = c;
+      }
     }
   }
+}
+
+//-----------------------------------------------------------
+// Procedure: colorOfReport()
+//   Pull the COLOR field (lowercased) out of a NODE_REPORT spec. "" if
+//   absent. (string2NodeRecord does not populate color.)
+
+string BHV_Scout::colorOfReport(string str)
+{
+  vector<string> svector = parseString(str, ',');
+  for(unsigned int i=0; i<svector.size(); i++) {
+    string param = tolower(biteStringX(svector[i], '='));
+    if(param == "color")
+      return(tolower(svector[i]));
+  }
+  return("");
+}
+
+//-----------------------------------------------------------
+// Procedure: findPushTarget()
+//   If a different-team opponent is hugging the region edge AND near us,
+//   return a target on its interior-forward quarter so our approach forces
+//   its give-way turn toward/over the boundary. Returns false otherwise
+//   (-> keep searching). Never targets a teammate or an unknown craft.
+
+bool BHV_Scout::findPushTarget(double& tx, double& ty)
+{
+  if(!m_grid_ready || (m_rescue_region.size() < 3))
+    return(false);
+
+  double now = getBufferCurrTime();
+
+  // Region centroid (interior reference).
+  double rcx = 0, rcy = 0;
+  for(unsigned int v=0; v<m_rescue_region.size(); v++) {
+    rcx += m_rescue_region.get_vx(v);
+    rcy += m_rescue_region.get_vy(v);
+  }
+  rcx /= m_rescue_region.size();
+  rcy /= m_rescue_region.size();
+
+  // Nearest engage-able opponent.
+  bool   have = false;
+  double best_d = 0, ox = 0, oy = 0, oh = 0;
+  map<string, Contact>::iterator it;
+  for(it=m_contacts.begin(); it!=m_contacts.end(); it++) {
+    Contact c = it->second;
+    // Opponent only if KNOWN to be a different team color (never a teammate
+    // or an unknown -- we must not push our own rescue boat).
+    if((m_my_color == "") || (c.color == "") || (c.color == m_my_color))
+      continue;
+    if(it->first == m_tmate)
+      continue;
+    if((now - c.utc) > 10)                 // stale contact
+      continue;
+    if(!m_rescue_region.contains(c.x, c.y)) // already outside; nothing to do
+      continue;
+    if(m_rescue_region.dist_to_poly(c.x, c.y) > m_push_edge_dist)
+      continue;                            // not near the edge
+    double d = hypot(c.x - m_osx, c.y - m_osy);
+    if(d > m_push_engage_range)            // too far from us -> keep searching
+      continue;
+    if(!have || (d < best_d)) {
+      have = true; best_d = d;
+      ox = c.x; oy = c.y; oh = c.heading;
+    }
+  }
+
+  if(!have)
+    return(false);
+
+  // Interior direction at the opponent (toward the region centroid).
+  double iux = rcx - ox, iuy = rcy - oy;
+  double imag = hypot(iux, iuy);
+  if(imag < 1e-6)
+    return(false);
+  iux /= imag; iuy /= imag;
+
+  // Opponent forward direction (compass heading: 0=N, clockwise).
+  const double PI = 3.141592653589793;
+  double ahx = sin(oh * PI / 180.0);
+  double ahy = cos(oh * PI / 180.0);
+
+  // Shoulder in: interior of the opponent by the standoff, plus a lead
+  // ahead of it so our approach forces an edge-ward give-way turn.
+  double lead = m_push_standoff * 0.8;
+  tx = ox + (iux * m_push_standoff) + (ahx * lead);
+  ty = oy + (iuy * m_push_standoff) + (ahy * lead);
+
+  // Keep our own target inside the region (OpRegion is the hard backstop,
+  // but don't ask the boat to chase a point out of bounds).
+  if(!m_rescue_region.contains(tx, ty)) {
+    double cx, cy;
+    if(m_rescue_region.closest_point_on_poly(tx, ty, cx, cy)) {
+      double ux = rcx - cx, uy = rcy - cy, m = hypot(ux, uy);
+      if(m > 1e-6) { tx = cx + (ux/m)*4; ty = cy + (uy/m)*4; }
+    }
+  }
+
+  postEventMessage("Scout PUSH opponent at " + doubleToStringX(ox,0) + "," +
+                   doubleToStringX(oy,0));
+  return(true);
 }
 
 //-----------------------------------------------------------

@@ -25,6 +25,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include "IvPBehavior.h"
 #include "XYPoint.h"
 #include "XYPolygon.h"
@@ -56,6 +57,13 @@ protected:
   void         buildSweepOrder();              // build m_order (once, after grid)
   bool         pickNextInOrder(double& rx, double& ry); // next unswept in order
 
+  // COLREGS push (Step 3): when an opponent hugs the region edge near us,
+  // position ben on its interior-forward quarter so the opponent's own
+  // collision-avoidance gives way toward/over the boundary (their DQ).
+  void         updateContacts();                       // refresh m_contacts + own color
+  bool         findPushTarget(double& tx, double& ty); // true if pushing an opponent
+  std::string  colorOfReport(std::string);             // COLOR field of a node report
+
 protected: // State variables
   double   m_osx;
   double   m_osy;
@@ -81,10 +89,30 @@ protected: // State variables
   std::vector<unsigned int> m_order;
   unsigned int              m_order_idx;
 
+  // Other vehicles seen via NODE_REPORT (for the COLREGS push), keyed by
+  // name and refreshed each tick from the latest report.
+  struct Contact { double x; double y; double heading; double utc; std::string color; };
+  std::map<std::string, Contact> m_contacts;
+
+  // Our own team color, learned from NODE_REPORT_LOCAL. Different-color
+  // craft are opponents we may push; same-color (our rescue teammate) we
+  // never push. Empty until learned.
+  std::string m_my_color;
+
+  // True while actively pushing an opponent, so when the push ends we
+  // re-pick a fresh sweep cell instead of driving to a stale push point.
+  bool m_pushing;
+
 protected: // Config variables
   double m_capture_radius;
   double m_desired_speed;
   double m_sweep_radius;   // detection/coverage radius (~scout reliable range)
+
+  // COLREGS push tuning.
+  bool   m_push_enabled;       // master on/off
+  double m_push_edge_dist;     // opponent within this of the boundary -> push-eligible
+  double m_push_engage_range;  // ... and within this of ben -> engage (else keep searching)
+  double m_push_standoff;      // how far interior of the opponent ben aims
 
   std::string m_tmate;
 };
