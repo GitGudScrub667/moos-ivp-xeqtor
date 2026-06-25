@@ -52,7 +52,7 @@ GenRescue::GenRescue()
   m_overshoot_max   = 18;  // m: extra inset for a 180-deg turn (real boat arcs wide)
   m_region_set = false;
 
-  m_buoy_margin = 9;       // m: clear the strong-avoid zone (inner_dist 6) but stay in detection range
+  m_buoy_ignore_radius = 6; // m: ignore swimmers within this of a buoy CENTER (4m octagon + 2m)
 
   m_use_two_opt = true;    // uncross the tour after ordering
   m_use_or_opt  = true;    // relocate short runs after uncrossing
@@ -159,15 +159,23 @@ bool GenRescue::Iterate()
     m_plan_pending = false;
   }
 
-  // Keep the boat working while any swimmer remains un-rescued. The survey
+  // Keep the boat working while any RESCUABLE swimmer remains. The survey
   // behavior fires its endflag (RETURN=true) the instant it has VISITED
   // every waypoint, but a single pass is a coin toss -- visited swimmers
   // can still be un-rescued. That would latch the boat into RETURNING and
   // send it home with known swimmers still out there. Forcing RETURN=false
   // re-activates the perpetual survey so the boat re-tours the misses.
-  // When the last swimmer is finally rescued m_swimmers empties, we stop
-  // overriding, and the boat returns home normally (as in Lab 9).
-  if(m_swimmers.size() > 0)
+  // Swimmers on/by a buoy are ignored (swimmerNearBuoy) so they DON'T count
+  // -- otherwise an un-rescuable on-buoy swimmer would trap the boat out
+  // forever. When the last rescuable swimmer is saved the count hits 0, we
+  // stop overriding, and the boat returns home normally (as in Lab 9).
+  unsigned int active = 0;
+  map<string, XYPoint>::iterator sit;
+  for(sit=m_swimmers.begin(); sit!=m_swimmers.end(); sit++) {
+    if(!swimmerNearBuoy(sit->second.x(), sit->second.y()))
+      active++;
+  }
+  if(active > 0)
     Notify("RETURN", "false");
 
   AppCastingMOOSApp::PostReport();
@@ -453,99 +461,46 @@ bool GenRescue::handleMailViewPolygon(string str)
 
   string label = poly.get_label();
   if(label.find("buoy") == string::npos)
-    return(true);                       // only track buoys
+    return(true);                       // not a buoy
+
+  // Track ONLY the real buoy octagon (~4m). The AvoidObstacle behavior
+  // also posts inflated influence rings -- buoy_N_mid_poly (~7m) and
+  // buoy_N_rim_poly (~12m) -- plus active=false erase placeholders. We
+  // skip those so the buoy "center" we ignore swimmers around is the real
+  // one. (Centers are concentric anyway, but this keeps m_buoys clean.)
+  if(label.find("rim") != string::npos)
+    return(true);
+  if(label.find("mid") != string::npos)
+    return(true);
+  if(str.find("active=false") != string::npos)
+    return(true);
 
   m_buoys[label] = poly;                 // keyed by label -> repeats update
   return(true);
 }
 
 //---------------------------------------------------------
-// Procedure: nudgeOffBuoys()
-//   Push any waypoint inside or within m_buoy_margin of a buoy out to
-//   m_buoy_margin beyond the buoy boundary, so the rescue helm's
-//   obstacle-avoidance does not fight the survey waypoint (deadlock).
+// Procedure: swimmerNearBuoy()
+//   True if (x,y) is within m_buoy_ignore_radius of any buoy CENTER. Such
+//   a swimmer sits on/right by a buoy; we drop it from the tour entirely
+//   (the rescue rarely completes and the boat wastes time fighting the
+//   avoidance), rather than chasing it.
 
-XYSegList GenRescue::nudgeOffBuoys(XYSegList path)
+bool GenRescue::swimmerNearBuoy(double x, double y)
 {
-  if(m_buoys.empty() || (m_buoy_margin <= 0))
-    return(path);
-
-  // Region centroid: we nudge toward it (region interior) so the moved
-  // waypoint stays in bounds (region is convex) instead of being pushed
-  // outward off the buoy and possibly out of the playing field.
-  double rcx = 0, rcy = 0;
-  bool have_rc = false;
-  if(m_region_set && (m_region.size() >= 3)) {
-    for(unsigned int v=0; v<m_region.size(); v++) {
-      rcx += m_region.get_vx(v);
-      rcy += m_region.get_vy(v);
-    }
-    rcx /= m_region.size();
-    rcy /= m_region.size();
-    have_rc = true;
+  map<string, XYPolygon>::iterator it;
+  for(it=m_buoys.begin(); it!=m_buoys.end(); it++) {
+    XYPolygon buoy = it->second;
+    if(buoy.size() < 3)
+      continue;
+    double bcx = 0, bcy = 0;
+    for(unsigned int v=0; v<buoy.size(); v++) { bcx += buoy.get_vx(v); bcy += buoy.get_vy(v); }
+    bcx /= buoy.size();
+    bcy /= buoy.size();
+    if(distPointToPoint(bcx, bcy, x, y) <= m_buoy_ignore_radius)
+      return(true);
   }
-
-  // Without the region we can't nudge toward the interior safely (and an
-  // outward push could go out of bounds), so leave the path unchanged.
-  // The region is known well before the boat deploys, so this only skips
-  // the very first pre-deploy plans.
-  if(!have_rc)
-    return(path);
-
-  XYSegList out;
-  for(unsigned int i=0; i<path.size(); i++) {
-    double wx = path.get_vx(i);
-    double wy = path.get_vy(i);
-
-    map<string, XYPolygon>::iterator it;
-    for(it=m_buoys.begin(); it!=m_buoys.end(); it++) {
-      XYPolygon buoy = it->second;
-      bool   inside = buoy.contains(wx, wy);
-      double dist   = buoy.dist_to_poly(wx, wy);   // distance to boundary
-      if(!inside && (dist >= m_buoy_margin))
-        continue;                                  // already clear of this buoy
-
-      // Buoy center and reach (max vertex distance from center).
-      double bcx = 0, bcy = 0;
-      for(unsigned int v=0; v<buoy.size(); v++) { bcx += buoy.get_vx(v); bcy += buoy.get_vy(v); }
-      bcx /= buoy.size();
-      bcy /= buoy.size();
-      double reach = 0;
-      for(unsigned int v=0; v<buoy.size(); v++) {
-        double d = distPointToPoint(bcx, bcy, buoy.get_vx(v), buoy.get_vy(v));
-        if(d > reach) reach = d;
-      }
-
-      // Push outward along the waypoint's own bearing from the buoy, so
-      // distinct swimmers near the same buoy stay distinct (no collapse)
-      // and the nudged point stays near the real swimmer. If the waypoint
-      // sits at the buoy center, fall back to the interior direction.
-      double ux = wx - bcx, uy = wy - bcy;
-      double mag = distPointToPoint(0, 0, ux, uy);
-      if(mag < 1e-6) { ux = rcx - bcx; uy = rcy - bcy; mag = distPointToPoint(0, 0, ux, uy); }
-      if(mag < 1e-6) { ux = 1; uy = 0; mag = 1; }
-      ux /= mag; uy /= mag;
-
-      double nwx = bcx + ux * (reach + m_buoy_margin);
-      double nwy = bcy + uy * (reach + m_buoy_margin);
-
-      // Keep the nudged waypoint in bounds (clamp toward interior if the
-      // outward push crossed the region edge -- e.g., a buoy near it).
-      XYPoint clamped = insetIntoRegion(nwx, nwy, m_boundary_margin);
-      wx = clamped.x();
-      wy = clamped.y();
-    }
-
-    // Drop near-duplicate waypoints (several swimmers nudged off the same
-    // buoy can land together). Detection range covers the dropped ones.
-    bool dup = false;
-    for(unsigned int k=0; k<out.size(); k++) {
-      if(distPointToPoint(out.get_vx(k), out.get_vy(k), wx, wy) < 3.0) { dup = true; break; }
-    }
-    if(!dup)
-      out.add_vertex(wx, wy);
-  }
-  return(out);
+  return(false);
 }
 
 //---------------------------------------------------------
@@ -801,6 +756,8 @@ void GenRescue::postShortestPath()
   map<string, XYPoint>::iterator it;
   for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
     XYPoint pt = it->second;
+    if(swimmerNearBuoy(pt.x(), pt.y()))   // on/by a buoy -> ignore entirely
+      continue;
     double  factor, margin;
     string  verdict = contestVerdict(pt.x(), pt.y(), factor, margin);
     if(verdict == "LOST")
@@ -811,15 +768,24 @@ void GenRescue::postShortestPath()
   }
 
   // Safety net: never idle. If the contest filter dropped everyone,
-  // re-add all swimmers with neutral factors and go after them anyway.
+  // re-add all swimmers with neutral factors and go after them anyway
+  // (still excluding the on/by-buoy ones we permanently ignore).
   if(sx_list.empty()) {
     for(it=m_swimmers.begin(); it!=m_swimmers.end(); it++) {
       XYPoint pt = it->second;
+      if(swimmerNearBuoy(pt.x(), pt.y()))
+        continue;
       sx_list.push_back(pt.x());
       sy_list.push_back(pt.y());
       f_list.push_back(1.0);
     }
   }
+
+  // If every remaining swimmer is on/by a buoy, there is nothing worth
+  // touring. Return without posting so the survey can complete and (with
+  // no rescuable swimmers left -- see Iterate) the boat heads home.
+  if(sx_list.empty())
+    return;
 
   // Stage 2 (idea B): coverage reduction. Collapse the survivors to a
   // minimal set of visit points so every swimmer is within
@@ -877,11 +843,6 @@ void GenRescue::postShortestPath()
   // Pull waypoints inside the boundary, more where the tour turns hard,
   // so turn overshoot can never carry the boat out of bounds.
   m_path = tightenForTurns(m_path);
-
-  // Finally, push any waypoint that landed on/near a buoy obstacle clear
-  // of it, so the helm's avoid-obstacle behavior doesn't deadlock with
-  // the survey waypoint.
-  m_path = nudgeOffBuoys(m_path);
 
   m_path.set_label("rescue");
 
@@ -1044,7 +1005,8 @@ bool GenRescue::buildReport()
          << " +" << doubleToStringX(m_overshoot_max,1) << "/turn m  (region "
          << (m_region_set ? "known" : "unknown") << ")"               << endl;
   m_msgs << "  Buoys known:              " << m_buoys.size()
-         << "  (nudge margin " << doubleToStringX(m_buoy_margin,1) << " m)" << endl;
+         << "  (ignore swimmers within " << doubleToStringX(m_buoy_ignore_radius,1)
+         << " m of center)" << endl;
   m_msgs << "  Tour cleanup:             2-opt " << (m_use_two_opt ? "on" : "off")
          << ", Or-opt " << (m_use_or_opt ? "on" : "off")              << endl;
   m_msgs << "  Re-sweep interval:        every " << doubleToStringX(m_replan_interval,1)

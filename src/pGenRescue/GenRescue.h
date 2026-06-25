@@ -42,10 +42,11 @@ class GenRescue : public AppCastingMOOSApp
   void postShortestPath();
   void postNullPath();
 
-  // Push any tour waypoint that lands on/near a buoy obstacle to the
-  // nearest navigable point clear of it (by m_buoy_margin), so the
-  // rescue helm doesn't deadlock between go-to-waypoint and avoid-buoy.
-  XYSegList nudgeOffBuoys(XYSegList path);
+  // True if (x,y) sits within m_buoy_ignore_radius of any buoy CENTER --
+  // a swimmer on/right by a buoy. Such swimmers are dropped from the tour
+  // entirely (rescue rarely completes; the boat just wastes time), never
+  // targeted.
+  bool swimmerNearBuoy(double x, double y);
 
   // Cluster-aware ordering: like a greedy nearest-neighbor tour, but
   // each candidate's distance is discounted by how many other swimmers
@@ -131,10 +132,10 @@ class GenRescue : public AppCastingMOOSApp
   double m_boundary_margin;
   double m_overshoot_max;
 
-  // Keep tour waypoints at least this far off a buoy obstacle so the
-  // BHV_AvoidObstacle behavior (high pwt, influence to ~14m) doesn't
-  // fight the survey waypoint and deadlock the helm. 0 disables.
-  double m_buoy_margin;
+  // Swimmers within this distance of a buoy CENTER are ignored entirely
+  // (not toured): a swimmer on/right by a buoy is rarely rescuable without
+  // the boat wasting time fighting the avoidance. 4m octagon + 2m = 6m.
+  double m_buoy_ignore_radius;
 
   // Tour cleanup local search. When true, the ordered tour is improved
   // to cut traversal time; false leaves clusterPath's order.
