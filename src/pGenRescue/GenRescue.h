@@ -35,6 +35,10 @@ class GenRescue : public AppCastingMOOSApp
   bool handleMailRescueRegion(std::string);
   bool handleMailNodeReport(std::string);
   bool handleMailViewPolygon(std::string);
+  // Pull the COLOR field (lowercased) out of a NODE_REPORT spec. We parse
+  // the raw spec because string2NodeRecord does not populate color. "" if
+  // absent. Used to tell teammates (same color) from opponents.
+  std::string colorOfReport(std::string);
   void postShortestPath();
   void postNullPath();
 
@@ -191,7 +195,14 @@ class GenRescue : public AppCastingMOOSApp
     double utc;       // local receipt time, for staleness checks
   };
   // Other vehicles we have seen, keyed by name (ownship excluded).
+  // TEAMMATES are excluded here -- only different-team craft are tracked
+  // as contest opponents (see handleMailNodeReport).
   std::map<std::string, Contact> m_contacts;
+
+  // Our own team color, learned from NODE_REPORT_LOCAL. A contact sharing
+  // this color is a teammate (e.g. our own scout), NOT a rescue opponent,
+  // so we must not "concede" swimmers to it. Empty until first learned.
+  std::string m_my_color;
 
   // Last time we regenerated the path, for the opponent-driven
   // periodic replan in Iterate().

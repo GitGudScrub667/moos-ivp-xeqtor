@@ -99,6 +99,12 @@ bool GenRescue::OnNewMail(MOOSMSG_LIST &NewMail)
     }
     else if(key == "NODE_REPORT")
       handled = handleMailNodeReport(sval);
+    else if(key == "NODE_REPORT_LOCAL") {
+      // Our own report: learn our team color to tell teammates from foes.
+      string c = colorOfReport(sval);
+      if(c != "")
+        m_my_color = c;
+    }
     else if(key == "RESCUE_REGION")
       handled = handleMailRescueRegion(sval);
     else if(key == "VIEW_POLYGON")
@@ -203,6 +209,7 @@ void GenRescue::RegisterVariables()
   Register("NAV_Y", 0);
   Register("NAV_HEADING", 0);
   Register("NODE_REPORT", 0);
+  Register("NODE_REPORT_LOCAL", 0);
   Register("RESCUE_REGION", 0);
   Register("VIEW_POLYGON", 0);
 }
@@ -313,6 +320,14 @@ bool GenRescue::handleMailNodeReport(string str)
   if((name == "") || (name == m_host_community))
     return(true);
 
+  // Skip TEAMMATES (same team color, e.g. our own scout). The contest
+  // logic concedes swimmers a faster *opponent* will reach first -- but a
+  // teammate scout never rescues, so conceding to it would just throw
+  // rescues away. Only different-team craft are real opponents. (Until we
+  // learn our own color, treat everyone as a potential opponent.)
+  if((m_my_color != "") && (colorOfReport(str) == m_my_color))
+    return(true);
+
   Contact c;
   c.x       = record.getX();
   c.y       = record.getY();
@@ -322,6 +337,23 @@ bool GenRescue::handleMailNodeReport(string str)
   m_contacts[name] = c;
 
   return(true);
+}
+
+//---------------------------------------------------------
+// Procedure: colorOfReport()
+//   Pull the COLOR field (lowercased) out of a NODE_REPORT spec. We parse
+//   the raw spec because string2NodeRecord does not populate color.
+//   Returns "" if no color field is present.
+
+string GenRescue::colorOfReport(string str)
+{
+  vector<string> svector = parseString(str, ',');
+  for(unsigned int i=0; i<svector.size(); i++) {
+    string param = tolower(biteStringX(svector[i], '='));
+    if(param == "color")
+      return(tolower(svector[i]));
+  }
+  return("");
 }
 
 //---------------------------------------------------------
