@@ -48,8 +48,8 @@ GenRescue::GenRescue()
   m_cover_range = 6;       // m: a visit point covers swimmers within this
 
   // Boundary safety (starting values; 0 disables).
-  m_boundary_margin = 5;   // m: base inset (small -> hug swimmers on safe passes)
-  m_overshoot_max   = 18;  // m: extra inset for a 180-deg turn (real boat arcs wide)
+  m_boundary_margin = 4;   // m: base inset (small -> hug swimmers on safe passes)
+  m_overshoot_max   = 10;  // m: extra turn-overshoot inset (reduced: was 18 -> hug edge swimmers; OpRegion is the hard backstop)
   m_region_set = false;
 
   m_buoy_ignore_radius = 6; // m: ignore swimmers within this of a buoy CENTER (4m octagon + 2m)
