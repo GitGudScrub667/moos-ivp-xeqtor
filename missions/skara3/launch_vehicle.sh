@@ -29,7 +29,7 @@ MAX_SPD="4"
 # The common ring (same for every boat).
 CIRCLE_X="45"
 CIRCLE_Y="-95"
-CIRCLE_RAD="42.43"
+CIRCLE_RAD="36.07"
 
 #------------------------------------------------------------
 for ARGI; do

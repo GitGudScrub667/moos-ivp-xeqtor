@@ -39,17 +39,32 @@ class ArrivalSync : public AppCastingMOOSApp
    void handleNodeReport(const std::string& report);
    bool addVehicle(const std::string& value);   // "abe, 87.43, -105"
    void computeReleaseOffsets();                 // stagger: farthest boat first
-   void commandSpeed(const std::string& v, double spd);  // throttled Notify
+   void postThrottled(const std::string& var_base,
+                      std::map<std::string,double>& cache,
+                      const std::string& v, double spd);
+   double slotAngleDeg(const std::string& v) const;   // phase phi_i on the ring
+   double actualAngleDeg(const std::string& v) const; // boat's live ring angle
 
- private: // Configuration
+ private: // Configuration (run-in / arrival sync)
    double m_max_speed;          // cruise cap; the farthest boat runs at this
    double m_min_speed;          // floor, so a near boat keeps steerage
    double m_min_arrival_time;   // T is never smaller than this (avoids blow-up)
-   double m_capture_dist;       // within this of the slot = "arrived", stop cmd
+   double m_capture_dist;       // within this of the slot = "arrived"
    double m_stagger_time;       // secs between successive boat releases (0 = off)
    std::string m_deploy_var;    // when true, run-in is active (DEPLOY_ALL)
    std::string m_return_var;    // when true, pause commanding (RETURN_ALL)
-   std::string m_update_var;    // base var; posts <update_var>_<VNAME>
+   std::string m_update_var;    // run-in speed base var (SLOT_UPDATE)
+
+ private: // Configuration (orbit phase-lock, opt-in)
+   bool   m_enable_orbit_lock;  // false => app behaves exactly as before
+   double m_circle_x;           // ring center
+   double m_circle_y;
+   double m_circle_rad;
+   double m_orbit_speed;        // nominal ring speed (= omega*r), controller center
+   double m_orbit_gain;         // m/s of speed correction per degree of phase error
+   double m_orbit_min;          // clamp on the modulated orbit speed
+   double m_orbit_max;
+   std::string m_orbit_var;     // orbit speed base var (ENCIRCLE_UPDATE)
 
    std::vector<std::string>       m_vehicles;   // vehicle names, in config order
    std::map<std::string, double>  m_slot_x;     // vname -> slot x
@@ -65,8 +80,13 @@ class ArrivalSync : public AppCastingMOOSApp
    std::map<std::string, bool>   m_have_nav;
    std::map<std::string, bool>   m_arrived;
    std::map<std::string, double> m_dist;          // last computed distance to slot
-   std::map<std::string, double> m_cmd_speed;     // last commanded speed
+   std::map<std::string, double> m_cmd_speed;     // last run-in speed commanded
    std::map<std::string, double> m_release_offset; // secs after deploy this boat starts
+
+   bool   m_orbit_active;       // orbit clock running
+   double m_orbit_t0;           // MOOSTime the orbit clock started (first arrival)
+   std::map<std::string, double> m_orbit_cmd;     // last orbit speed commanded
+   std::map<std::string, double> m_phase_err;     // last phase error (deg), for report
 
    double m_curr_T;             // last computed common arrival time (for report)
    unsigned int m_posts;        // count of speed commands sent (for report)

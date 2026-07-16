@@ -43,6 +43,7 @@ ProcessConfig = uFldShoreBroker
   qbridge = NODE_REPORT, NODE_MESSAGE
   qbridge = MOOS_MANUAL_OVERRIDE, APPCAST_REQ
   qbridge = SLOT_UPDATE
+  qbridge = ENCIRCLE_UPDATE
 }
 
 //--------------------------------------------------
@@ -66,9 +67,14 @@ ProcessConfig = uFldNodeComms
 
 //--------------------------------------------------
 // pArrivalSync config block
-//   Adaptive run-in coordinator: commands each boat's speed so all
-//   four reach their ring slots at the same time. Slots MUST match
-//   the goto_slot points in meta_vehicle.bhv (init_field.sh vslotpos).
+//   (1) run-in: commands each boat's speed so all four reach their ring
+//       slots at the same time (staggered, farthest first).
+//   (2) orbit phase-lock: once arrived, each boat tracks a virtual point
+//       sweeping the ring at omega=orbit_speed/radius, phase = its slot
+//       angle. Speed is modulated to null its own phase error -> exactly
+//       even 90-deg spacing, no inter-boat coupling.
+//   Slots MUST match the goto_slot points in meta_vehicle.bhv and the
+//   ring in the encircle behavior (init_field.sh vslotpos / launch_vehicle CIRCLE_*).
 
 ProcessConfig = pArrivalSync
 {
@@ -85,10 +91,21 @@ ProcessConfig = pArrivalSync
   return_var = RETURN_ALL
   update_var = SLOT_UPDATE
 
-  vehicle = abe, 87.43, -95       // E
-  vehicle = ben, 45, -52.57       // N
-  vehicle = cal, 2.57, -95        // W
-  vehicle = deb, 45, -137.43      // S
+  // Orbit phase-lock (this is the skara3 improvement over skara2)
+  enable_orbit_lock = true
+  circle_x    = 45
+  circle_y    = -95
+  circle_rad  = 36.07
+  orbit_speed = 2.0
+  orbit_gain  = 0.03      // m/s of speed correction per degree of phase error
+  orbit_min   = 1.0
+  orbit_max   = 3.0
+  orbit_var   = ENCIRCLE_UPDATE
+
+  vehicle = abe, 81.07, -95       // E
+  vehicle = ben, 45, -58.93       // N
+  vehicle = cal, 8.93, -95        // W
+  vehicle = deb, 45, -131.07      // S
 }
 
 //--------------------------------------------------

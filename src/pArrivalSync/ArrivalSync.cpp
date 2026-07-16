@@ -29,11 +29,24 @@ ArrivalSync::ArrivalSync()
   m_return_var       = "RETURN_ALL";
   m_update_var       = "SLOT_UPDATE";
 
+  // Orbit phase-lock config (opt-in)
+  m_enable_orbit_lock = false;
+  m_circle_x    = 0;
+  m_circle_y    = 0;
+  m_circle_rad  = 0;
+  m_orbit_speed = 2.0;
+  m_orbit_gain  = 0.03;   // m/s per degree of phase error
+  m_orbit_min   = 1.0;
+  m_orbit_max   = 3.0;
+  m_orbit_var   = "ENCIRCLE_UPDATE";
+
   // State
   m_deployed    = false;
   m_returning   = false;
   m_staggered   = false;
   m_deploy_time = 0;
+  m_orbit_active = false;
+  m_orbit_t0    = 0;
   m_curr_T      = 0;
   m_posts       = 0;
 }
@@ -127,13 +140,16 @@ bool ArrivalSync::Iterate()
       double d  = hypot(dx, dy);
       m_dist[v] = d;
 
-      if(d <= m_capture_dist) {   // close enough: let the behavior capture + orbit
+      if(d <= m_capture_dist) {   // close enough: hand off to the ring
         m_arrived[v] = true;
-        commandSpeed(v, 0.0);     // clear any leftover command
+        // Clear the run-in command. If orbit-lock is on, the orbit pass
+        // below takes over; otherwise the loiter runs at its own speed.
+        if(!m_enable_orbit_lock)
+          postThrottled(m_update_var, m_cmd_speed, v, 0.0);
         continue;
       }
       if(elapsed < m_release_offset[v]) {  // not released yet: hold at the cluster
-        commandSpeed(v, 0.0);
+        postThrottled(m_update_var, m_cmd_speed, v, 0.0);
         continue;
       }
       running.push_back(v);
@@ -154,13 +170,46 @@ bool ArrivalSync::Iterate()
         double spd = m_dist[v] / T;
         if(spd > m_max_speed) spd = m_max_speed;
         if(spd < m_min_speed) spd = m_min_speed;
-        commandSpeed(v, spd);
+        postThrottled(m_update_var, m_cmd_speed, v, spd);
+      }
+    }
+
+    // Pass 3 (opt-in): ORBIT PHASE-LOCK. Each arrived boat tracks a
+    // virtual point sweeping the ring at omega = orbit_speed/radius. Its
+    // target angle is its slot phase plus omega*(t-t0); we modulate its
+    // orbit speed by the phase error to null it. No neighbour coupling:
+    // each boat's command depends only on its own angle + the clock.
+    if(m_enable_orbit_lock && (m_circle_rad > 0)) {
+      double omega_deg = (m_orbit_speed / m_circle_rad) * (180.0 / M_PI);
+      for(unsigned int i=0; i<m_vehicles.size(); i++) {
+        string v = m_vehicles[i];
+        if(!m_have_nav[v] || !m_arrived[v])
+          continue;
+
+        // Start the shared clock at the first arrival.
+        if(!m_orbit_active) {
+          m_orbit_active = true;
+          m_orbit_t0 = m_curr_time;
+        }
+
+        double target = slotAngleDeg(v) + omega_deg * (m_curr_time - m_orbit_t0);
+        double actual = actualAngleDeg(v);
+        double err = target - actual;
+        while(err > 180)  err -= 360;   // wrap to [-180,180]
+        while(err < -180) err += 360;
+        m_phase_err[v] = err;
+
+        double spd = m_orbit_speed + (m_orbit_gain * err);
+        if(spd > m_orbit_max) spd = m_orbit_max;
+        if(spd < m_orbit_min) spd = m_orbit_min;
+        postThrottled(m_orbit_var, m_orbit_cmd, v, spd);
       }
     }
   }
   else {
-    // Not active (idle or returning): re-arm the stagger for the next deploy.
+    // Not active (idle or returning): re-arm for the next deploy.
     m_staggered = false;
+    m_orbit_active = false;
     m_curr_T = 0;
   }
 
@@ -199,18 +248,51 @@ void ArrivalSync::computeReleaseOffsets()
 }
 
 //---------------------------------------------------------
-// Procedure: commandSpeed()
-//   Post a run-in speed for one boat, throttled so we only notify when
-//   the command meaningfully changes.
+// Procedure: postThrottled()
+//   Post "<var_base>_<VNAME> = speed=X" for one boat, but only when the
+//   value in 'cache' has meaningfully changed (keeps the DB quiet).
 
-void ArrivalSync::commandSpeed(const string& v, double spd)
+void ArrivalSync::postThrottled(const string& var_base,
+                                map<string,double>& cache,
+                                const string& v, double spd)
 {
-  bool have_last = (m_cmd_speed.count(v) > 0);
-  if(!have_last || fabs(spd - m_cmd_speed[v]) > 0.05) {
-    Notify(m_update_var + "_" + toupper(v), "speed=" + doubleToStringX(spd, 2));
-    m_cmd_speed[v] = spd;
+  bool have_last = (cache.count(v) > 0);
+  if(!have_last || fabs(spd - cache[v]) > 0.05) {
+    Notify(var_base + "_" + toupper(v), "speed=" + doubleToStringX(spd, 2));
+    cache[v] = spd;
     m_posts++;
   }
+}
+
+//---------------------------------------------------------
+// Procedure: slotAngleDeg()
+//   Phase phi_i: the angle of this boat's slot on the ring, measured
+//   from the ring center (E=0, N=90, W=180, S=270), in [0,360).
+
+double ArrivalSync::slotAngleDeg(const string& v) const
+{
+  map<string,double>::const_iterator sx = m_slot_x.find(v);
+  map<string,double>::const_iterator sy = m_slot_y.find(v);
+  if(sx == m_slot_x.end() || sy == m_slot_y.end())
+    return(0);
+  double a = atan2(sy->second - m_circle_y, sx->second - m_circle_x) * (180.0 / M_PI);
+  if(a < 0) a += 360;
+  return(a);
+}
+
+//---------------------------------------------------------
+// Procedure: actualAngleDeg()
+//   The boat's live angle on the ring, from the ring center, in [0,360).
+
+double ArrivalSync::actualAngleDeg(const string& v) const
+{
+  map<string,double>::const_iterator nx = m_nav_x.find(v);
+  map<string,double>::const_iterator ny = m_nav_y.find(v);
+  if(nx == m_nav_x.end() || ny == m_nav_y.end())
+    return(0);
+  double a = atan2(ny->second - m_circle_y, nx->second - m_circle_x) * (180.0 / M_PI);
+  if(a < 0) a += 360;
+  return(a);
 }
 
 //---------------------------------------------------------
@@ -298,6 +380,25 @@ bool ArrivalSync::OnStartUp()
     else if(param == "update_var") {
       m_update_var = value; handled = true;
     }
+    else if(param == "enable_orbit_lock")
+      handled = setBooleanOnString(m_enable_orbit_lock, value);
+    else if(param == "circle_x")
+      handled = setDoubleOnString(m_circle_x, value);
+    else if(param == "circle_y")
+      handled = setDoubleOnString(m_circle_y, value);
+    else if(param == "circle_rad")
+      handled = setDoubleOnString(m_circle_rad, value);
+    else if(param == "orbit_speed")
+      handled = setDoubleOnString(m_orbit_speed, value);
+    else if(param == "orbit_gain")
+      handled = setDoubleOnString(m_orbit_gain, value);
+    else if(param == "orbit_min")
+      handled = setDoubleOnString(m_orbit_min, value);
+    else if(param == "orbit_max")
+      handled = setDoubleOnString(m_orbit_max, value);
+    else if(param == "orbit_var") {
+      m_orbit_var = value; handled = true;
+    }
     else if(param == "vehicle") {
       handled = addVehicle(value);
       if(!handled)
@@ -342,11 +443,18 @@ bool ArrivalSync::buildReport()
   m_msgs << "stagger_time:   " << doubleToStringX(m_stagger_time,1) << " s (farthest released first)" << endl;
   m_msgs << "elapsed:        " << doubleToStringX(elapsed,1) << " s since deploy" << endl;
   m_msgs << "common ETA (T): " << doubleToStringX(m_curr_T,1) << " s" << endl;
+  if(m_enable_orbit_lock) {
+    m_msgs << "orbit-lock:     ON  (center " << doubleToStringX(m_circle_x,0) << ","
+           << doubleToStringX(m_circle_y,0) << " r" << doubleToStringX(m_circle_rad,1)
+           << ", " << doubleToStringX(m_orbit_speed,1) << " m/s, gain "
+           << doubleToStringX(m_orbit_gain,3) << ") clock "
+           << (m_orbit_active ? "running" : "idle") << endl;
+  }
   m_msgs << "speed cmds sent:" << m_posts << endl;
   m_msgs << "============================================" << endl;
 
-  ACTable actab(6);
-  actab << "Boat | Slot(x,y) | Dist(m) | Release@ | Cmd Spd | State";
+  ACTable actab(7);
+  actab << "Boat | Slot(x,y) | Dist(m) | Release@ | RunIn Spd | Phase err | Orbit Spd";
   actab.addHeaderLines();
   for(unsigned int i=0; i<m_vehicles.size(); i++) {
     string v = m_vehicles[i];
@@ -354,12 +462,19 @@ bool ArrivalSync::buildReport()
     string dist = m_dist.count(v) ? doubleToStringX(m_dist[v],1) : "-";
     string rel  = m_release_offset.count(v) ? (doubleToStringX(m_release_offset[v],0)+"s") : "-";
     string spd  = m_cmd_speed.count(v) ? doubleToStringX(m_cmd_speed[v],2) : "-";
-    string st;
-    if(!m_have_nav[v])          st = "no-report";
-    else if(m_arrived[v])       st = "ARRIVED";
-    else if(m_staggered && (elapsed < m_release_offset[v])) st = "held";
-    else                        st = "running";
-    actab << v << slot << dist << rel << spd << st;
+    string perr, ospd;
+    if(m_enable_orbit_lock && m_arrived[v]) {
+      perr = m_phase_err.count(v) ? (doubleToStringX(m_phase_err[v],1)+"deg") : "-";
+      ospd = m_orbit_cmd.count(v)  ? doubleToStringX(m_orbit_cmd[v],2) : "-";
+    }
+    else {
+      string st;
+      if(!m_have_nav[v])          st = "no-report";
+      else if(m_staggered && (elapsed < m_release_offset[v])) st = "held";
+      else                        st = "running";
+      perr = st; ospd = "-";
+    }
+    actab << v << slot << dist << rel << spd << perr << ospd;
   }
   m_msgs << actab.getFormattedString();
 
