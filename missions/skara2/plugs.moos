@@ -1,0 +1,52 @@
+<tag><origin_warp>
+MOOSTimeWarp = $(WARP)
+
+// Skaramangas cove, Gulf of Elefsina.
+// Datum = lighthouse at the pier tip -> local (0,0).
+LatOrigin  = 37.998009
+LongOrigin = 23.581591
+
+<tag><pShare>
+//---------------------------------------------------
+// pShare Config Block
+
+ProcessConfig = pShare
+{
+  AppTick   = 2
+  CommsTick = 2
+
+  input = route = $(IP_ADDR):$(PSHARE_PORT)
+}
+
+<tag><pHostInfo>
+//--------------------------------------------------
+// pHostInfo config block
+
+ProcessConfig = pHostInfo
+{
+  AppTick   = 1
+  CommsTick = 1
+
+#ifdef IP_ADDR
+  default_hostip_force = $(IP_ADDR)
+#endif
+}
+
+<tag><uProcessWatch>
+//--------------------------------------------------
+// uProcessWatch config block
+
+ProcessConfig = uProcessWatch
+{
+  AppTick   = 1
+  CommsTick = 1
+
+  allow_retractions = true
+  watch_all = true
+
+  nowatch = uXMS*
+  nowatch = uPokeDB*
+  nowatch = uMAC*
+
+  summary_wait = 12
+}
