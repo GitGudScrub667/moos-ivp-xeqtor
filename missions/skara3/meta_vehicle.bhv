@@ -1,0 +1,153 @@
+//*******************************************************
+// FILE: meta_vehicle.bhv   (skara3 - $(VNAME))
+//   Fixed-slot encircle:
+//     DEPLOY  -> transit to this boat's N/E/S/W slot at a
+//                pre-computed speed (all boats arrive together),
+//                then orbit the common ring, evenly spaced.
+//     RETURN  -> drop the ring, go home, hold station at home.
+//   Never station-keeps on the ring. COLREGS avoidance + op-region.
+//*******************************************************
+
+initialize DEPLOY       = false
+initialize RETURN       = false
+initialize STATION_KEEP = false
+initialize SLOTTED      = false
+initialize AVOID        = true
+
+//---------------------------------------------------
+set MODE = ACTIVE {
+  DEPLOY = true
+} INACTIVE
+
+set MODE = RETURNING {
+  MODE = ACTIVE
+  RETURN = true
+}
+
+set MODE = ENCIRCLING {
+  MODE = ACTIVE
+  RETURN = false
+}
+
+//----------------------------------------------
+// 1. Transit to this boat's assigned slot on the ring.
+//    The speed here is just a starting default; pArrivalSync on the
+//    shoreside overrides it live (via updates=SLOT_UPDATE) so all four
+//    boats reach their N/E/S/W slots simultaneously. On arrival, flip
+//    SLOTTED -> hand off to the orbit behaviour below.
+Behavior = BHV_Waypoint
+{
+  name       = goto_slot
+  pwt        = 100
+  condition  = MODE == ENCIRCLING
+  condition  = SLOTTED = false
+  updates    = SLOT_UPDATE
+  perpetual  = true
+  endflag    = SLOTTED = true
+
+  speed          = 0.0
+  capture_radius = 5.0
+  slip_radius    = 12.0
+  lead           = 8
+  point          = $(SLOT_POS)
+
+  visual_hints = nextpt_color=green, nextpt_vertex_size=6
+  visual_hints = vertex_color=green, edge_color=gray60
+}
+
+//----------------------------------------------
+// 2. Orbit the common ring (same circle for all boats). Even
+//    spacing is set by the simultaneous slot arrival and held
+//    because every boat orbits CCW at the same ORBIT_SPD.
+Behavior = BHV_Loiter
+{
+  name       = encircle
+  pwt        = 100
+  condition  = MODE == ENCIRCLING
+  condition  = SLOTTED = true
+  updates    = ENCIRCLE_UPDATE
+  perpetual  = true
+
+  speed        = $(ORBIT_SPD)
+  clockwise    = false
+  radius       = 5.0
+  nm_radius    = 12.0
+  acquire_dist = 8
+
+  polygon = radial:: x=$(CIRCLE_X), y=$(CIRCLE_Y), radius=$(CIRCLE_RAD), pts=16, snap=1, label=ring
+
+  visual_hints = edge_color=gray50, vertex_color=$(COLOR)
+  visual_hints = nextpt_color=white, nextpt_lcolor=khaki
+  visual_hints = edge_size=1, vertex_size=2
+}
+
+//----------------------------------------------
+// 3. Return home when RETURN is set. On reaching within capture_radius
+//    (5 m) of home, DEPLOY -> false: the boat goes INACTIVE, the helm
+//    posts all-stop, and it coasts to a dead stop and stays there (no
+//    station-keeping). SLOTTED reset so a later DEPLOY re-slots it.
+Behavior = BHV_Waypoint
+{
+  name       = waypt_return
+  pwt        = 100
+  condition  = MODE == RETURNING
+  updates    = RETURN_UPDATE
+  perpetual  = true
+  endflag    = DEPLOY = false
+  endflag    = SLOTTED = false
+
+  speed          = $(ORBIT_SPD)
+  capture_radius = 5.0
+  slip_radius    = 10.0
+  point          = $(RETURN_POS)
+
+  visual_hints = nextpt_color=red, nextpt_lcolor=red
+  visual_hints = vertex_color=red, edge_color=red
+}
+
+//----------------------------------------------
+// 4. Dynamic COLREGS contact avoidance (spawns per contact).
+Behavior = BHV_AvdColregsV22
+{
+  name       = avdcol_
+  pwt        = 350
+  condition  = AVOID = true
+  condition  = MODE == ACTIVE
+  updates    = CONTACT_INFO
+  templating = spawn
+  endflag    = CONTACT_RESOLVED = $[CONTACT]
+
+  contact          = to-be-set
+  on_no_contact_ok = true
+  extrapolate      = true
+  decay            = 30,60
+
+  headon_only       = false
+  use_refinery      = true
+
+  pwt_outer_dist    = 20
+  pwt_inner_dist    = 8
+  completed_dist    = 35
+  min_util_cpa_dist = 5
+  max_util_cpa_dist = 10
+  pwt_grade         = linear
+}
+
+//----------------------------------------------
+// 5. Operating-region fence (3-ring soft/halt boundary).
+Behavior = BHV_OpRegionV24
+{
+  name      = opregion
+  pwt       = 300
+  condition = DEPLOY = true
+
+  core_poly = pts={-32,-87: 14,-15: 106,-56: 103,-164: 18,-178}
+
+  save_dist   = 3
+  halt_dist   = 15
+  recover_spd = 0.6
+
+  visual_hints = edge_size = 1
+  visual_hints = save_edge_color = gray30
+  visual_hints = halt_edge_color = gray40
+}
