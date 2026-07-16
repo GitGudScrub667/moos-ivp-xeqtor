@@ -1,0 +1,192 @@
+//*******************************************************
+// FILE: meta_shoreside.moos   (skara3_1 - Skaramangas cove)
+//   Shoreside community: viewer + broker + node-comms relay.
+//*******************************************************
+
+ServerHost = localhost
+ServerPort = $(MOOS_PORT)
+Community  = shoreside
+
+#include plugs.moos <origin_warp>
+
+//--------------------------------------------------------
+ProcessConfig = ANTLER
+{
+  MSBetweenLaunches = 100
+
+  Run = MOOSDB          @ NewConsole = false
+  Run = pMarineViewer   @ NewConsole = false
+  Run = pLogger         @ NewConsole = false
+  Run = uProcessWatch   @ NewConsole = false
+  Run = pShare          @ NewConsole = false
+  Run = pHostInfo       @ NewConsole = false
+  Run = uFldShoreBroker @ NewConsole = false
+  Run = uFldNodeComms   @ NewConsole = false
+  Run = pArrivalSync    @ NewConsole = false
+  Run = pRealm          @ NewConsole = false
+}
+
+#include plugs.moos <pShare>
+#include plugs.moos <pHostInfo>
+#include plugs.moos <uProcessWatch>
+
+//--------------------------------------------------
+// uFldShoreBroker config block
+//   qbridge FOO  ==  bridge src=FOO_$V alias=FOO  +  src=FOO_ALL alias=FOO
+
+ProcessConfig = uFldShoreBroker
+{
+  AppTick   = 1
+  CommsTick = 1
+
+  qbridge = DEPLOY, RETURN, STATION_KEEP
+  qbridge = NODE_REPORT, NODE_MESSAGE
+  qbridge = MOOS_MANUAL_OVERRIDE, APPCAST_REQ
+  qbridge = SLOT_UPDATE
+  qbridge = ENCIRCLE_UPDATE
+}
+
+//--------------------------------------------------
+// uFldNodeComms config block
+//   Relays each vehicle's NODE_REPORT to the others so the
+//   per-vehicle contact manager + COLREGS avoidance can see
+//   neighbours. comms_range set large: the whole cove is small.
+
+ProcessConfig = uFldNodeComms
+{
+  AppTick   = 2
+  CommsTick = 2
+
+  comms_range      = 500
+  critical_range   = 25
+  min_msg_interval = 0
+  max_msg_length   = 1000
+
+  view_node_rpt_pulses = false
+}
+
+//--------------------------------------------------
+// pArrivalSync config block
+//   (1) run-in: commands each boat's speed so all four reach their ring
+//       slots at the same time (staggered, farthest first).
+//   (2) orbit phase-lock: once arrived, each boat tracks a virtual point
+//       sweeping the ring at omega=orbit_speed/radius, phase = its slot
+//       angle. Speed is modulated to null its own phase error -> exactly
+//       even 90-deg spacing, no inter-boat coupling.
+//   Slots MUST match the goto_slot points in meta_vehicle.bhv and the
+//   ring in the encircle behavior (init_field.sh vslotpos / launch_vehicle CIRCLE_*).
+
+ProcessConfig = pArrivalSync
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  max_speed        = 3.0
+  min_speed        = 0.4
+  min_arrival_time = 8
+  capture_dist     = 6
+  stagger_time     = 5     // secs between boat releases (farthest first)
+
+  deploy_var = DEPLOY_ALL
+  return_var = RETURN_ALL
+  update_var = SLOT_UPDATE
+
+  // Orbit phase-lock (this is the skara3_1 improvement over skara2)
+  enable_orbit_lock = true
+  circle_x    = 45
+  circle_y    = -95
+  circle_rad  = 36.07
+  orbit_speed = 2.0
+  orbit_gain  = 0.03      // m/s of speed correction per degree of phase error
+  orbit_min   = 1.0
+  orbit_max   = 3.0
+  orbit_var   = ENCIRCLE_UPDATE
+
+  vehicle = abe, 81.07, -95       // E
+  vehicle = ben, 45, -58.93       // N
+  vehicle = cal, 8.93, -95        // W
+  vehicle = deb, 45, -131.07      // S
+}
+
+//--------------------------------------------------
+// pLogger config block
+
+ProcessConfig = pLogger
+{
+  AppTick   = 10
+  CommsTick = 10
+
+  File          = XLOG_SHORESIDE
+  PATH          = ./
+  AsyncLog      = true
+  FileTimeStamp = true
+  LogAuxSrc     = true
+
+  WildCardLogging = true
+  WildCardOmitPattern = *_STATUS
+  WildCardOmitPattern = DB_VARSUMMARY
+  WildCardOmitPattern = DB_RWSUMMARY
+  WildCardOmitPattern = *_ITER_GAP
+  WildCardOmitPattern = *_ITER_LEN
+}
+
+//--------------------------------------------------------
+// pMarineViewer config block  (Skaramangas cove chart)
+
+ProcessConfig = pMarineViewer
+{
+  AppTick    = 4
+  CommsTick  = 4
+
+  tiff_file            = skaramangas.tif
+
+  set_pan_x            = 0
+  set_pan_y            = 0
+  zoom                 = 0.85
+  vehicles_shape_scale = 1.5
+  vehicles_name_mode   = names
+
+  hash_delta           = 50
+  hash_shade           = 0.22
+  hash_viewable        = true
+
+  trails_point_size    = 1
+  circle_viewable_all  = true
+
+  appcast_viewable     = true
+  appcast_color_scheme = indigo
+  nodes_font_size      = large
+  procs_font_size      = large
+  appcast_font_size    = medium
+
+  scope = NODE_REPORT
+  scope = DEPLOY_ALL
+
+  button_one   = DEPLOY  # DEPLOY_ALL=true
+  button_one   = MOOS_MANUAL_OVERRIDE_ALL=false
+  button_one   = RETURN_ALL=false
+  button_one   = STATION_KEEP_ALL=false
+
+  button_two   = RETURN  # RETURN_ALL=true
+  button_two   = STATION_KEEP_ALL=false
+
+  button_three = ALL-STOP # DEPLOY_ALL=false
+}
+
+//--------------------------------------------------------
+// uProcessWatch config block
+
+ProcessConfig = uProcessWatch
+{
+  AppTick   = 1
+  CommsTick = 1
+
+  allow_retractions = true
+  watch_all = true
+
+  nowatch = uXMS*
+  nowatch = uPokeDB*
+  nowatch = uMAC*
+
+  summary_wait = 12
+}
