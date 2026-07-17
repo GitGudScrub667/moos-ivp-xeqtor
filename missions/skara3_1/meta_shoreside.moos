@@ -44,6 +44,7 @@ ProcessConfig = uFldShoreBroker
   qbridge = MOOS_MANUAL_OVERRIDE, APPCAST_REQ
   qbridge = SLOT_UPDATE
   qbridge = ENCIRCLE_UPDATE
+  qbridge = INVESTIGATE, INVESTIGATE_UPDATE
 }
 
 //--------------------------------------------------
@@ -99,8 +100,26 @@ ProcessConfig = pArrivalSync
   orbit_speed = 2.0
   orbit_gain  = 0.03      // m/s of speed correction per degree of phase error
   orbit_min   = 1.0
-  orbit_max   = 3.0
+  orbit_max   = 3.5      // headroom for the re-spacing boats to catch up on rejoin
   orbit_var   = ENCIRCLE_UPDATE
+
+  // Target investigation (left-click detour; skara3_1 feature).
+  // region = the op-region core_poly; clicks outside it are ignored.
+  enable_investigate = true
+  region            = -32,-87:14,-15:106,-56:103,-164:18,-178
+  loop_radius       = 8
+  loop_points       = 8
+  investigate_speed = 2.0
+  target_var        = TARGET_DETECT
+  // Smart rejoin (Option 2 = re-space on return). After circling the target
+  // the boat comes straight back to the NEAREST ring point (a radial move,
+  // so it never chords across the interior). The shoreside then re-anchors
+  // the four phase slots so the returning boat keeps the spot it re-entered
+  // and the other three re-even around it (in cyclic order -> nobody crosses
+  // anybody). rejoin_speed = the radial re-entry speed; rejoin_capture must
+  // stay > the bhv_investigate capture_radius (4).
+  rejoin_speed      = 2.5
+  rejoin_capture    = 6
 
   vehicle = abe, 81.07, -95       // E
   vehicle = ben, 45, -58.93       // N
@@ -161,6 +180,12 @@ ProcessConfig = pMarineViewer
 
   scope = NODE_REPORT
   scope = DEPLOY_ALL
+  scope = TARGET_DETECT
+
+  // Left-click anywhere = report a detected target at the click point.
+  // pArrivalSync queues it (if inside the op-region) and sends the
+  // nearest free boat to investigate.
+  left_context[detect] = TARGET_DETECT = x=$[XPOS],y=$[YPOS]
 
   button_one   = DEPLOY  # DEPLOY_ALL=true
   button_one   = MOOS_MANUAL_OVERRIDE_ALL=false

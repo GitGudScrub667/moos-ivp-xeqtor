@@ -44,6 +44,18 @@ class ArrivalSync : public AppCastingMOOSApp
                       const std::string& v, double spd);
    double slotAngleDeg(const std::string& v) const;   // phase phi_i on the ring
    double actualAngleDeg(const std::string& v) const; // boat's live ring angle
+   // Target investigation (left-click detour)
+   void handleTargetDetect(const std::string& sval);
+   bool pointInRegion(double x, double y) const;
+   std::string closestFreeBoat(double tx, double ty) const;
+   void assignInvestigation();
+   std::string loopSpec(double tx, double ty) const;   // "points=..." around target
+   void handleRejoin();          // bring the investigator radially back to the ring
+   void respaceFormation(const std::string& inv);  // re-even the ring around 'inv'
+   void cancelInvestigation();   // clear any in-progress investigation (return/idle)
+   void drawTarget(const std::string& label, double x, double y,
+                   const std::string& color);
+   void eraseTarget(const std::string& label);
 
  private: // Configuration (run-in / arrival sync)
    double m_max_speed;          // cruise cap; the farthest boat runs at this
@@ -66,6 +78,20 @@ class ArrivalSync : public AppCastingMOOSApp
    double m_orbit_max;
    std::string m_orbit_var;     // orbit speed base var (ENCIRCLE_UPDATE)
 
+ private: // Configuration (target investigation, opt-in)
+   bool   m_enable_investigate; // false => no left-click detours
+   double m_loop_radius;        // radius of the small circle around a target
+   int    m_loop_points;        // number of points in that circle
+   double m_investigate_speed;  // detour transit + loop speed
+   double m_rejoin_speed;       // rejoin: radial re-entry speed onto the ring
+   double m_rejoin_capture;     // rejoin: within this of the ring = re-entered
+   std::string m_target_var;    // subscribe: TARGET_DETECT (from the viewer)
+   std::string m_inv_flag_var;  // post: INVESTIGATE_<VNAME> = true
+   std::string m_inv_update_var;// post: INVESTIGATE_UPDATE_<VNAME> = points=...
+   std::string m_inv_done_var;  // subscribe: INVESTIGATE_DONE (from the boat)
+   std::vector<double> m_region_x;  // op-region polygon (clicks outside are ignored)
+   std::vector<double> m_region_y;
+
    std::vector<std::string>       m_vehicles;   // vehicle names, in config order
    std::map<std::string, double>  m_slot_x;     // vname -> slot x
    std::map<std::string, double>  m_slot_y;     // vname -> slot y
@@ -87,6 +113,21 @@ class ArrivalSync : public AppCastingMOOSApp
    double m_orbit_t0;           // MOOSTime the orbit clock started (first arrival)
    std::map<std::string, double> m_orbit_cmd;     // last orbit speed commanded
    std::map<std::string, double> m_phase_err;     // last phase error (deg), for report
+   std::map<std::string, double> m_phase_off;     // per-boat phase offset (deg); re-
+                                                  // anchored on rejoin so the returning
+                                                  // boat slots in where it comes back
+
+   // Investigation state
+   std::vector<double>      m_queue_x;    // pending targets (FIFO)
+   std::vector<double>      m_queue_y;
+   std::vector<std::string> m_queue_label;
+   std::string m_investigator;            // boat currently out ("" = none)
+   std::string m_cur_label;               // marker label of the active investigation
+   std::map<std::string, bool> m_investigating;
+   std::map<std::string, bool> m_rejoining; // investigator transiting back to the ring
+   double m_rejoin_px;                    // last posted rejoin entry point (throttle)
+   double m_rejoin_py;
+   unsigned int m_target_count;           // running count, for unique marker labels
 
    double m_curr_T;             // last computed common arrival time (for report)
    unsigned int m_posts;        // count of speed commands sent (for report)

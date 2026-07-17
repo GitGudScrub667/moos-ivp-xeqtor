@@ -13,6 +13,7 @@ initialize RETURN       = false
 initialize STATION_KEEP = false
 initialize SLOTTED      = false
 initialize AVOID        = true
+initialize INVESTIGATE  = false
 
 //---------------------------------------------------
 set MODE = ACTIVE {
@@ -24,9 +25,16 @@ set MODE = RETURNING {
   RETURN = true
 }
 
+set MODE = INVESTIGATING {
+  MODE = ACTIVE
+  RETURN = false
+  INVESTIGATE = true
+}
+
 set MODE = ENCIRCLING {
   MODE = ACTIVE
   RETURN = false
+  INVESTIGATE = false
 }
 
 //----------------------------------------------
@@ -79,6 +87,39 @@ Behavior = BHV_Loiter
   visual_hints = edge_color=gray50, vertex_color=$(COLOR)
   visual_hints = nextpt_color=white, nextpt_lcolor=khaki
   visual_hints = edge_size=1, vertex_size=2
+}
+
+//----------------------------------------------
+// 2b. Target investigation. When the shoreside (pArrivalSync) picks
+//     THIS boat as the closest free investigator, it posts
+//     INVESTIGATE_<VNAME>=true (-> INVESTIGATING mode) plus a live
+//     waypoint list via INVESTIGATE_UPDATE. The shoreside drives the
+//     WHOLE detour: first the 8-point loop around the target, then a
+//     radial rejoin waypoint = the NEAREST ring point (so the boat comes
+//     straight back onto the ring without chording across the interior).
+//     This behaviour just follows those waypoints (perpetual, no self-
+//     terminate). On finishing the loop it fires INVESTIGATE_DONE=<vname>
+//     as a "circled it, begin rejoin" ping. Once the boat reaches the
+//     ring the shoreside re-anchors the formation (this boat keeps the
+//     spot it re-entered; the other three re-even around it) and flips
+//     INVESTIGATE->false -> mode falls back to ENCIRCLING.
+Behavior = BHV_Waypoint
+{
+  name       = bhv_investigate
+  pwt        = 100
+  condition  = MODE == INVESTIGATING
+  updates    = INVESTIGATE_UPDATE
+  perpetual  = true
+  endflag    = INVESTIGATE_DONE = $(VNAME)
+
+  speed          = 2.0
+  capture_radius = 4.0
+  slip_radius    = 10.0
+  repeat         = 0
+  points         = $(SLOT_POS)
+
+  visual_hints = nextpt_color=magenta, nextpt_vertex_size=5
+  visual_hints = vertex_color=magenta, edge_color=magenta
 }
 
 //----------------------------------------------
