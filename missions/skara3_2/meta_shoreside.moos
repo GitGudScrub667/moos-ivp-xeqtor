@@ -45,6 +45,8 @@ ProcessConfig = uFldShoreBroker
   qbridge = SLOT_UPDATE
   qbridge = ENCIRCLE_UPDATE
   qbridge = INVESTIGATE, INVESTIGATE_UPDATE
+  qbridge = DISPERSE, DISPERSE_UPDATE
+  qbridge = SLOTTED
 }
 
 //--------------------------------------------------
@@ -96,7 +98,7 @@ ProcessConfig = pArrivalSync
   enable_orbit_lock = true
   circle_x    = 45
   circle_y    = -95
-  circle_rad  = 36.07
+  circle_rad  = 27.05
   orbit_speed = 2.0
   orbit_gain  = 0.03      // m/s of speed correction per degree of phase error
   orbit_min   = 1.0
@@ -121,10 +123,22 @@ ProcessConfig = pArrivalSync
   rejoin_speed      = 2.5
   rejoin_capture    = 6
 
-  vehicle = abe, 81.07, -95       // E
-  vehicle = ben, 45, -58.93       // N
-  vehicle = cal, 8.93, -95        // W
-  vehicle = deb, 45, -131.07      // S
+  // DISPERSE / ASSEMBLE square formation (skara3_2 feature).
+  // Corners = the largest axis-aligned square that fits the op-region:
+  // centre (45,-95), half-side 35.9, so the corners sit 23.7 m OUTSIDE the
+  // (shrunk) r=27.05 ring and every loiter circle keeps >=5 m of water to
+  // the op-region edge. On DISPERSE each boat takes its nearest corner
+  // (assigned in cyclic order so no two boats cross) and loiters it.
+  enable_disperse   = true
+  square            = 80.9,-59.1:9.1,-59.1:9.1,-130.9:80.9,-130.9
+  square_radius     = 8
+  disperse_speed    = 2.0
+  disperse_cmd_var  = DISPERSE_CMD
+
+  vehicle = abe, 72.05, -95       // E
+  vehicle = ben, 45, -67.95       // N
+  vehicle = cal, 17.95, -95       // W
+  vehicle = deb, 45, -122.05      // S
 }
 
 //--------------------------------------------------
@@ -196,6 +210,13 @@ ProcessConfig = pMarineViewer
   button_two   = STATION_KEEP_ALL=false
 
   button_three = ALL-STOP # DEPLOY_ALL=false
+
+  // DISPERSE / ASSEMBLE. These post a shoreside-only command var --
+  // pArrivalSync picks the corner assignment and only then sends each
+  // boat its own DISPERSE_<V> + DISPERSE_UPDATE_<V>. (Never post
+  // DISPERSE_ALL directly: that would reach the boats with no corner set.)
+  button_four  = DISPERSE # DISPERSE_CMD=true
+  button_five  = ASSEMBLE # DISPERSE_CMD=false
 }
 
 //--------------------------------------------------------

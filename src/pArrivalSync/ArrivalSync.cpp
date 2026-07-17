@@ -54,10 +54,21 @@ ArrivalSync::ArrivalSync()
   m_inv_update_var     = "INVESTIGATE_UPDATE";
   m_inv_done_var       = "INVESTIGATE_DONE";
 
+  // DISPERSE/ASSEMBLE square formation (opt-in)
+  m_enable_disperse    = false;
+  m_square_radius      = 8.0;
+  m_disperse_speed     = 2.0;
+  m_disperse_cmd_var   = "DISPERSE_CMD";
+  m_disp_flag_var      = "DISPERSE";
+  m_disp_update_var    = "DISPERSE_UPDATE";
+  m_slotted_var        = "SLOTTED";
+
   // State
   m_target_count = 0;
   m_rejoin_px   = 1e18;   // sentinel: forces the first rejoin-point post
   m_rejoin_py   = 1e18;
+  m_dispersed   = false;
+  m_pending_cmd = CMD_NONE;
   m_deployed    = false;
   m_returning   = false;
   m_staggered   = false;
@@ -109,13 +120,25 @@ bool ArrivalSync::OnNewMail(MOOSMSG_LIST &NewMail)
     else if(key == m_target_var)
       handleTargetDetect(msg.GetString());
 
+    else if(key == m_disperse_cmd_var)
+      handleDisperseCmd(tolower(msg.GetString()) == "true");
+
     else if(key == m_inv_done_var) {
       // The investigator finished circling the target. Begin the rejoin
       // leg: the shoreside now steers it back into its (empty, moving)
       // slot on the ring so it re-enters with a near-zero phase error.
       string who = tolower(stripBlankEnds(msg.GetString()));
       if(who == m_investigator) {
-        if(m_enable_orbit_lock && (m_circle_rad > 0)) {
+        if(m_dispersed) {
+          // Out on the square: there is no ring to rejoin. Just release the
+          // boat -- its own disperse_loiter re-acquires its corner.
+          Notify(m_inv_flag_var + "_" + toupper(who), "false");
+          m_investigating[who] = false;
+          eraseTarget(m_cur_label);
+          m_investigator = "";
+          m_cur_label = "";
+        }
+        else if(m_enable_orbit_lock && (m_circle_rad > 0)) {
           m_rejoining[who] = true;         // handleRejoin() takes it from here
           m_rejoin_px = 1e18;              // force a fresh entry-point post
           m_rejoin_py = 1e18;
@@ -160,7 +183,10 @@ bool ArrivalSync::Iterate()
 
   bool active = m_deployed && !m_returning;
 
-  if(active && (m_max_speed > 0)) {
+  // The ring passes (run-in + orbit phase-lock) only make sense when the
+  // boats belong to the ring. Out on the DISPERSE square each boat is held
+  // by its own loiter behaviour, so they are skipped entirely.
+  if(active && (m_max_speed > 0) && !m_dispersed) {
 
     // First active tick of this deploy: fix the deploy time and the
     // staggered release schedule (farthest boat released first).
@@ -253,21 +279,30 @@ bool ArrivalSync::Iterate()
       }
     }
 
-    // Pass 4 (opt-in): drive the investigation subsystem. First advance
-    // any in-progress rejoin (steer the returning boat back into its
-    // slot), then dispatch the next queued target to a free boat.
-    if(m_enable_investigate) {
-      handleRejoin();
-      assignInvestigation();
-    }
   }
-  else {
+
+  // The detour subsystem runs in BOTH formations: on the ring (rejoin via
+  // the moving slot) and out on the square (the boat simply returns to its
+  // corner). handleRejoin() no-ops unless a ring rejoin is actually pending.
+  if(active && m_enable_investigate) {
+    handleRejoin();
+    assignInvestigation();
+  }
+
+  // A DISPERSE/ASSEMBLE pressed mid-detour fires once nobody is out.
+  if(active && m_enable_disperse && (m_investigator == "") && (m_pending_cmd != CMD_NONE))
+    runPendingCmd();
+
+  if(!active) {
     // Not active (idle or returning): cancel any in-progress investigation
-    // (clears the boat's INVESTIGATE flag so a later deploy is clean) and
-    // re-arm for the next deploy.
+    // and drop the square -- both clear the boats' flags so a later deploy
+    // starts clean -- then re-arm.
     if(m_enable_investigate)
       cancelInvestigation();
-    m_staggered = false;
+    if(m_dispersed)
+      cancelDisperse();
+    m_pending_cmd  = CMD_NONE;
+    m_staggered    = false;
     m_orbit_active = false;
     m_curr_T = 0;
   }
@@ -410,7 +445,10 @@ string ArrivalSync::closestFreeBoat(double tx, double ty) const
     map<string,bool>::const_iterator ar = m_arrived.find(v);
     map<string,bool>::const_iterator in = m_investigating.find(v);
     if(hn == m_have_nav.end() || !hn->second) continue;
-    if(ar == m_arrived.end()  || !ar->second) continue;
+    // On the ring, only boats that actually reached their slot may be sent.
+    // Out on the square that test doesn't apply -- any boat holding a corner
+    // is fair game.
+    if(!m_dispersed && (ar == m_arrived.end() || !ar->second)) continue;
     if(in != m_investigating.end() && in->second) continue;
     double nx = m_nav_x.find(v)->second;
     double ny = m_nav_y.find(v)->second;
@@ -590,6 +628,168 @@ void ArrivalSync::cancelInvestigation()
 }
 
 //---------------------------------------------------------
+// Procedure: squareSpec()
+//   A BHV_Loiter update: the small circle this boat holds at its assigned
+//   square corner, plus the transit-out / loiter speed.
+
+string ArrivalSync::squareSpec(double cx, double cy, const string& v) const
+{
+  string spec = "polygon=radial:: x=" + doubleToStringX(cx,2) +
+                ", y=" + doubleToStringX(cy,2) +
+                ", radius=" + doubleToStringX(m_square_radius,1) +
+                ", pts=8, snap=1, label=" + v + "_sq";
+  spec += " # speed=" + doubleToStringX(m_disperse_speed,2);
+  return(spec);
+}
+
+//---------------------------------------------------------
+// Procedure: handleDisperseCmd()
+//   A DISPERSE (true) / ASSEMBLE (false) button press. If a target detour
+//   is in flight the command is QUEUED: changing formation mid-detour would
+//   strand the investigator between the ring and the square.
+
+void ArrivalSync::handleDisperseCmd(bool on)
+{
+  if(!m_enable_disperse)
+    return;
+  if(m_investigator != "") {
+    m_pending_cmd = (on ? CMD_DISPERSE : CMD_ASSEMBLE);
+    return;
+  }
+  if(on && !m_dispersed)
+    doDisperse();
+  else if(!on && m_dispersed)
+    doAssemble();
+}
+
+//---------------------------------------------------------
+// Procedure: runPendingCmd()
+//   Fire a button press that had been queued behind a target detour.
+
+void ArrivalSync::runPendingCmd()
+{
+  int cmd = m_pending_cmd;
+  m_pending_cmd = CMD_NONE;
+  if((cmd == CMD_DISPERSE) && !m_dispersed)
+    doDisperse();
+  else if((cmd == CMD_ASSEMBLE) && m_dispersed)
+    doAssemble();
+}
+
+//---------------------------------------------------------
+// Procedure: doDisperse()
+//   Send every boat outward to its own corner of the fixed square. Corners
+//   are handed out in CYCLIC ORDER (boats sorted by their angle round the
+//   ring centre, corners likewise) using whichever rotation gives the least
+//   total travel. That is the "nearest corner" assignment AND it guarantees
+//   no two boats cross paths on the way out.
+
+void ArrivalSync::doDisperse()
+{
+  unsigned int n = m_square_x.size();
+  if(n == 0) {
+    reportRunWarning("DISPERSE ignored: no square configured");
+    return;
+  }
+
+  // Boats with a known position, sorted by angle around the ring centre.
+  vector<pair<double,string> > boats;
+  for(unsigned int i=0; i<m_vehicles.size(); i++) {
+    string v = m_vehicles[i];
+    if(!m_have_nav[v])
+      continue;
+    boats.push_back(make_pair(actualAngleDeg(v), v));
+  }
+  if(boats.empty()) {
+    reportRunWarning("DISPERSE ignored: no boat positions yet");
+    return;
+  }
+  sort(boats.begin(), boats.end(),
+       [](const pair<double,string>& a, const pair<double,string>& b){
+         return a.first < b.first; });
+
+  // The corners, sorted by angle around that same centre.
+  vector<pair<double,unsigned int> > cors;
+  for(unsigned int k=0; k<n; k++) {
+    double a = atan2(m_square_y[k]-m_circle_y, m_square_x[k]-m_circle_x) * (180.0/M_PI);
+    if(a < 0) a += 360;
+    cors.push_back(make_pair(a, k));
+  }
+  sort(cors.begin(), cors.end(),
+       [](const pair<double,unsigned int>& a, const pair<double,unsigned int>& b){
+         return a.first < b.first; });
+
+  // Pick the cyclic rotation with the least total travel.
+  unsigned int nb = boats.size();
+  unsigned int best_rot = 0;
+  double best_total = -1;
+  for(unsigned int rot=0; rot<n; rot++) {
+    double total = 0;
+    for(unsigned int i=0; i<nb; i++) {
+      unsigned int ci = cors[(i+rot) % n].second;
+      string v = boats[i].second;
+      total += hypot(m_square_x[ci]-m_nav_x[v], m_square_y[ci]-m_nav_y[v]);
+    }
+    if((best_total < 0) || (total < best_total)) {
+      best_total = total;
+      best_rot   = rot;
+    }
+  }
+
+  // Send each boat out to its corner.
+  for(unsigned int i=0; i<nb; i++) {
+    unsigned int ci = cors[(i+best_rot) % n].second;
+    string v = boats[i].second;
+    Notify(m_disp_update_var + "_" + toupper(v),
+           squareSpec(m_square_x[ci], m_square_y[ci], v));
+    Notify(m_disp_flag_var + "_" + toupper(v), "true");
+    m_corner_of[v] = (int)ci;
+  }
+
+  m_dispersed    = true;
+  m_orbit_active = false;   // the ring clock stops; it restarts on ASSEMBLE
+}
+
+//---------------------------------------------------------
+// Procedure: doAssemble()
+//   Drop the square and re-form the ring by re-running the proven run-in:
+//   clear DISPERSE + SLOTTED on every boat so goto_slot picks up again, and
+//   let the arrival-sync passes bring them all to their cardinal slots at
+//   the same moment. No stagger -- they are already well spread out.
+
+void ArrivalSync::doAssemble()
+{
+  for(unsigned int i=0; i<m_vehicles.size(); i++) {
+    string v = m_vehicles[i];
+    Notify(m_disp_flag_var + "_" + toupper(v), "false");   // -> ENCIRCLING
+    Notify(m_slotted_var   + "_" + toupper(v), "false");   // -> re-run goto_slot
+    m_arrived[v]        = false;
+    m_phase_off[v]      = slotAngleDeg(v);  // back to the canonical cardinals
+    m_release_offset[v] = 0;                // everyone released at once
+    m_cmd_speed.erase(v);                   // clear throttles so fresh speeds post
+    m_orbit_cmd.erase(v);
+  }
+  m_corner_of.clear();
+  m_dispersed    = false;
+  m_orbit_active = false;   // the clock restarts at the first arrival
+  m_staggered    = true;    // offsets already set (all zero): don't recompute
+  m_deploy_time  = m_curr_time;
+}
+
+//---------------------------------------------------------
+// Procedure: cancelDisperse()
+//   Drop the square without re-forming (used when the field returns or goes
+//   idle), so no boat redeploys stuck in DISPERSED.
+
+void ArrivalSync::cancelDisperse()
+{
+  for(unsigned int i=0; i<m_vehicles.size(); i++)
+    Notify(m_disp_flag_var + "_" + toupper(m_vehicles[i]), "false");
+  m_corner_of.clear();
+  m_dispersed = false;
+}
+
+//---------------------------------------------------------
 // Procedure: drawTarget() / eraseTarget()
 
 void ArrivalSync::drawTarget(const string& label, double x, double y,
@@ -748,6 +948,32 @@ bool ArrivalSync::OnStartUp()
       if(!handled)
         reportConfigWarning("Bad region (need >=3 x,y vertices): " + orig);
     }
+    else if(param == "enable_disperse")
+      handled = setBooleanOnString(m_enable_disperse, value);
+    else if(param == "square_radius")
+      handled = setDoubleOnString(m_square_radius, value);
+    else if(param == "disperse_speed")
+      handled = setDoubleOnString(m_disperse_speed, value);
+    else if(param == "disperse_cmd_var") {
+      m_disperse_cmd_var = value; handled = true;
+    }
+    else if(param == "square") {
+      // "x1,y1:x2,y2:..." -> the fixed corners of the DISPERSE formation.
+      m_square_x.clear();
+      m_square_y.clear();
+      vector<string> verts = parseString(value, ':');
+      for(unsigned int k=0; k<verts.size(); k++) {
+        string vx = biteStringX(verts[k], ',');
+        string vy = verts[k];
+        if(isNumber(vx) && isNumber(vy)) {
+          m_square_x.push_back(atof(vx.c_str()));
+          m_square_y.push_back(atof(vy.c_str()));
+        }
+      }
+      handled = (m_square_x.size() >= 3);
+      if(!handled)
+        reportConfigWarning("Bad square (need >=3 x,y corners): " + orig);
+    }
     else if(param == "vehicle") {
       handled = addVehicle(value);
       if(!handled)
@@ -778,6 +1004,8 @@ void ArrivalSync::registerVariables()
     Register(m_target_var, 0);
     Register(m_inv_done_var, 0);
   }
+  if(m_enable_disperse)
+    Register(m_disperse_cmd_var, 0);
 }
 
 //------------------------------------------------------------
@@ -787,6 +1015,7 @@ bool ArrivalSync::buildReport()
 {
   string phase = "IDLE";
   if(m_deployed && m_returning) phase = "RETURNING (paused)";
+  else if(m_deployed && m_dispersed) phase = "DISPERSED (square)";
   else if(m_deployed)           phase = "RUN-IN (active)";
 
   double elapsed = (m_staggered ? (m_curr_time - m_deploy_time) : 0);
@@ -814,6 +1043,15 @@ bool ArrivalSync::buildReport()
            << "  loop r" << doubleToStringX(m_loop_radius,1)
            << " x" << m_loop_points
            << "  rejoin_spd=" << doubleToStringX(m_rejoin_speed,1) << endl;
+  }
+  if(m_enable_disperse) {
+    string pend = "(none)";
+    if(m_pending_cmd == CMD_DISPERSE) pend = "DISPERSE queued (waiting on detour)";
+    if(m_pending_cmd == CMD_ASSEMBLE) pend = "ASSEMBLE queued (waiting on detour)";
+    m_msgs << "disperse:       " << (m_dispersed ? "SQUARE" : "ring")
+           << "  corners=" << m_square_x.size()
+           << "  loiter r" << doubleToStringX(m_square_radius,1)
+           << "  pending=" << pend << endl;
   }
   m_msgs << "speed cmds sent:" << m_posts << endl;
   m_msgs << "============================================" << endl;

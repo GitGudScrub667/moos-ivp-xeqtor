@@ -19,6 +19,12 @@
 #include <map>
 #include "MOOS/libMOOS/Thirdparty/AppCasting/AppCastingMOOSApp.h"
 
+// A DISPERSE/ASSEMBLE button press that arrived while a target detour was
+// still running gets parked in m_pending_cmd and fired once the boat rejoins.
+static const int CMD_NONE     = 0;
+static const int CMD_DISPERSE = 1;
+static const int CMD_ASSEMBLE = 2;
+
 class ArrivalSync : public AppCastingMOOSApp
 {
  public:
@@ -53,6 +59,13 @@ class ArrivalSync : public AppCastingMOOSApp
    void handleRejoin();          // bring the investigator radially back to the ring
    void respaceFormation(const std::string& inv);  // re-even the ring around 'inv'
    void cancelInvestigation();   // clear any in-progress investigation (return/idle)
+   // DISPERSE / ASSEMBLE (square formation)
+   void handleDisperseCmd(bool on);   // button press; may be queued behind a detour
+   void runPendingCmd();              // fire a queued DISPERSE/ASSEMBLE
+   void doDisperse();                 // assign corners + send the boats out
+   void doAssemble();                 // drop the square, re-run the ring run-in
+   void cancelDisperse();             // clear the square (return/idle)
+   std::string squareSpec(double cx, double cy, const std::string& v) const;
    void drawTarget(const std::string& label, double x, double y,
                    const std::string& color);
    void eraseTarget(const std::string& label);
@@ -92,6 +105,17 @@ class ArrivalSync : public AppCastingMOOSApp
    std::vector<double> m_region_x;  // op-region polygon (clicks outside are ignored)
    std::vector<double> m_region_y;
 
+ private: // Configuration (DISPERSE/ASSEMBLE square formation, opt-in)
+   bool   m_enable_disperse;    // false => the buttons do nothing
+   std::vector<double> m_square_x;   // the fixed square corners
+   std::vector<double> m_square_y;
+   double m_square_radius;      // radius of the small loiter circle at a corner
+   double m_disperse_speed;     // transit-out + loiter speed
+   std::string m_disperse_cmd_var;  // subscribe: DISPERSE_CMD (from the buttons)
+   std::string m_disp_flag_var;     // post: DISPERSE_<VNAME> = true/false
+   std::string m_disp_update_var;   // post: DISPERSE_UPDATE_<VNAME> = polygon=...
+   std::string m_slotted_var;       // post: SLOTTED_<VNAME> = false (on assemble)
+
    std::vector<std::string>       m_vehicles;   // vehicle names, in config order
    std::map<std::string, double>  m_slot_x;     // vname -> slot x
    std::map<std::string, double>  m_slot_y;     // vname -> slot y
@@ -128,6 +152,11 @@ class ArrivalSync : public AppCastingMOOSApp
    double m_rejoin_px;                    // last posted rejoin entry point (throttle)
    double m_rejoin_py;
    unsigned int m_target_count;           // running count, for unique marker labels
+
+   // Square-formation state
+   bool m_dispersed;                      // boats are out on the square
+   int  m_pending_cmd;                    // queued button press (see CMD_* below)
+   std::map<std::string, int> m_corner_of;  // vname -> square corner index (report)
 
    double m_curr_T;             // last computed common arrival time (for report)
    unsigned int m_posts;        // count of speed commands sent (for report)

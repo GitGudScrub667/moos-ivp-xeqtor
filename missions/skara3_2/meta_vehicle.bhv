@@ -14,6 +14,7 @@ initialize STATION_KEEP = false
 initialize SLOTTED      = false
 initialize AVOID        = true
 initialize INVESTIGATE  = false
+initialize DISPERSE     = false
 
 //---------------------------------------------------
 set MODE = ACTIVE {
@@ -31,10 +32,21 @@ set MODE = INVESTIGATING {
   INVESTIGATE = true
 }
 
+// Square (DISPERSE) formation. A target detour still outranks it: an
+// investigating boat leaves its corner, circles the target, then drops
+// back to DISPERSED and its loiter re-acquires the corner on its own.
+set MODE = DISPERSED {
+  MODE = ACTIVE
+  RETURN = false
+  INVESTIGATE = false
+  DISPERSE = true
+}
+
 set MODE = ENCIRCLING {
   MODE = ACTIVE
   RETURN = false
   INVESTIGATE = false
+  DISPERSE = false
 }
 
 //----------------------------------------------
@@ -120,6 +132,36 @@ Behavior = BHV_Waypoint
 
   visual_hints = nextpt_color=magenta, nextpt_vertex_size=5
   visual_hints = vertex_color=magenta, edge_color=magenta
+}
+
+//----------------------------------------------
+// 2c. Square (DISPERSE) formation. The shoreside picks which corner of
+//     the square THIS boat takes (nearest, without any two boats crossing)
+//     and sends it as a small loiter circle via DISPERSE_UPDATE. This one
+//     behaviour does the whole job: BHV_Loiter's own acquisition flies the
+//     boat outward off the ring to that corner, then holds a tight circle
+//     there. ASSEMBLE just clears DISPERSE -> mode falls back to ENCIRCLING
+//     and the normal run-in machinery re-forms the ring.
+Behavior = BHV_Loiter
+{
+  name       = disperse_loiter
+  pwt        = 100
+  condition  = MODE == DISPERSED
+  updates    = DISPERSE_UPDATE
+  perpetual  = true
+
+  speed        = 2.0
+  clockwise    = false
+  radius       = 4.0
+  nm_radius    = 8.0
+  acquire_dist = 10
+
+  // Placeholder only: the real corner is set live by pArrivalSync on DISPERSE.
+  polygon = radial:: x=$(CIRCLE_X), y=$(CIRCLE_Y), radius=8, pts=8, snap=1, label=$(VNAME)_sq
+
+  visual_hints = edge_color=$(COLOR), vertex_color=$(COLOR)
+  visual_hints = nextpt_color=white, nextpt_lcolor=khaki
+  visual_hints = edge_size=1, vertex_size=2
 }
 
 //----------------------------------------------
