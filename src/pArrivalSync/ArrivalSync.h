@@ -53,6 +53,11 @@ class ArrivalSync : public AppCastingMOOSApp
    // Target investigation (left-click detour)
    void handleTargetDetect(const std::string& sval);
    bool pointInRegion(double x, double y) const;
+   double regionClearance(double x, double y, double& nx, double& ny) const;
+   bool nudgeIntoRegion(double& x, double& y) const;  // pull a target in so its loop fits
+   // Assign boats to target points without any two crossing paths.
+   void cyclicAssign(const std::vector<double>& tx, const std::vector<double>& ty,
+                     std::vector<std::string>& boats, std::vector<unsigned int>& tidx);
    std::string closestFreeBoat(double tx, double ty) const;
    void assignInvestigation();
    std::string loopSpec(double tx, double ty) const;   // "points=..." around target
@@ -94,6 +99,11 @@ class ArrivalSync : public AppCastingMOOSApp
  private: // Configuration (target investigation, opt-in)
    bool   m_enable_investigate; // false => no left-click detours
    double m_loop_radius;        // radius of the small circle around a target
+   double m_loop_margin;        // extra water the loop needs inside the op-region.
+                                // Boats actually fly ~2 m wider than commanded
+                                // (turn-radius overshoot), so this covers that
+                                // plus a buffer; a click too near the edge is
+                                // nudged inward until loop_radius+loop_margin fits.
    int    m_loop_points;        // number of points in that circle
    double m_investigate_speed;  // detour transit + loop speed
    double m_rejoin_speed;       // rejoin: radial re-entry speed onto the ring
@@ -117,8 +127,13 @@ class ArrivalSync : public AppCastingMOOSApp
    std::string m_slotted_var;       // post: SLOTTED_<VNAME> = false (on assemble)
 
    std::vector<std::string>       m_vehicles;   // vehicle names, in config order
-   std::map<std::string, double>  m_slot_x;     // vname -> slot x
-   std::map<std::string, double>  m_slot_y;     // vname -> slot y
+   std::map<std::string, double>  m_slot_x;     // vname -> CURRENT slot x
+   std::map<std::string, double>  m_slot_y;     // vname -> CURRENT slot y
+   // The canonical slots from config, parallel to m_vehicles. ASSEMBLE may hand
+   // a boat a DIFFERENT cardinal (whichever is nearest its corner), so the
+   // current slot above can differ; a fresh deploy restores these.
+   std::vector<double>            m_slot0_x;
+   std::vector<double>            m_slot0_y;
 
  private: // State
    bool m_deployed;

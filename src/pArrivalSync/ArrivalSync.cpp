@@ -44,6 +44,7 @@ ArrivalSync::ArrivalSync()
   // Target investigation config (opt-in)
   m_enable_investigate = false;
   m_loop_radius        = 8.0;
+  m_loop_margin        = 4.0;   // boats fly ~2 m wider than commanded, + buffer
   m_loop_points        = 8;
   m_investigate_speed  = 2.0;
   m_rejoin_speed       = 2.5;    // radial re-entry onto the ring (a touch above orbit)
@@ -109,8 +110,16 @@ bool ArrivalSync::OnNewMail(MOOSMSG_LIST &NewMail)
       // rejoin may have re-anchored them).
       if(m_deployed && !was) {
         for(unsigned int i=0; i<m_vehicles.size(); i++) {
-          m_arrived[m_vehicles[i]]   = false;
-          m_phase_off[m_vehicles[i]] = slotAngleDeg(m_vehicles[i]);
+          string v = m_vehicles[i];
+          m_arrived[v] = false;
+          // A previous ASSEMBLE may have handed this boat a different cardinal;
+          // a fresh deploy puts everyone back on their canonical slot.
+          m_slot_x[v] = m_slot0_x[i];
+          m_slot_y[v] = m_slot0_y[i];
+          Notify(m_update_var + "_" + toupper(v),
+                 "point=" + doubleToStringX(m_slot_x[v],2) + "," +
+                            doubleToStringX(m_slot_y[v],2));
+          m_phase_off[v] = slotAngleDeg(v);
         }
       }
     }
@@ -183,6 +192,15 @@ bool ArrivalSync::Iterate()
 
   bool active = m_deployed && !m_returning;
 
+  // Keep every boat's distance-to-slot live, for the report. (The run-in pass
+  // below stops looking at a boat once it has arrived, so this can't live
+  // there or the figure would freeze at its arrival value.)
+  for(unsigned int i=0; i<m_vehicles.size(); i++) {
+    string v = m_vehicles[i];
+    if(m_have_nav[v])
+      m_dist[v] = hypot(m_slot_x[v]-m_nav_x[v], m_slot_y[v]-m_nav_y[v]);
+  }
+
   // The ring passes (run-in + orbit phase-lock) only make sense when the
   // boats belong to the ring. Out on the DISPERSE square each boat is held
   // by its own loiter behaviour, so they are skipped entirely.
@@ -207,10 +225,7 @@ bool ArrivalSync::Iterate()
       if(!m_have_nav[v] || m_arrived[v])
         continue;
 
-      double dx = m_slot_x[v] - m_nav_x[v];
-      double dy = m_slot_y[v] - m_nav_y[v];
-      double d  = hypot(dx, dy);
-      m_dist[v] = d;
+      double d = m_dist[v];       // kept live at the top of Iterate()
 
       if(d <= m_capture_dist) {   // close enough: hand off to the ring
         m_arrived[v] = true;
@@ -231,6 +246,7 @@ bool ArrivalSync::Iterate()
 
     // Pass 2: common arrival time from the farthest RELEASED boat, then
     // per-boat speed so all released boats share that arrival time.
+    m_curr_T = 0;                 // 0 = nobody running in (report shows "-")
     if(!running.empty()) {
       double T = dmax / m_max_speed;
       if(T < m_min_arrival_time)
@@ -405,6 +421,19 @@ void ArrivalSync::handleTargetDetect(const string& sval)
     reportRunWarning("Target outside op-region, ignored: " + sval);
     return;
   }
+
+  // The click is inside, but the LOOP around it also has to fit: a target
+  // near the edge would otherwise walk the boat across the boundary. Pull
+  // it inward just far enough.
+  double ox = x, oy = y;
+  if(!nudgeIntoRegion(x, y))
+    reportRunWarning("Target too near the op-region edge for a full loop; "
+                     "using the best fit: " + sval);
+  if((fabs(x-ox) > 0.1) || (fabs(y-oy) > 0.1))
+    reportEvent("Target nudged inward to fit its loop: " +
+                doubleToStringX(ox,1) + "," + doubleToStringX(oy,1) + " -> " +
+                doubleToStringX(x,1)  + "," + doubleToStringX(y,1));
+
   string label = "target_" + uintToString(m_target_count++);
   m_queue_x.push_back(x);
   m_queue_y.push_back(y);
@@ -429,6 +458,83 @@ bool ArrivalSync::pointInRegion(double x, double y) const
       inside = !inside;
   }
   return(inside);
+}
+
+//---------------------------------------------------------
+// Procedure: regionClearance()
+//   Distance from (x,y) to the nearest point on the op-region boundary,
+//   and that boundary point in (nx,ny). Assumes the point is inside.
+
+double ArrivalSync::regionClearance(double x, double y, double& nx, double& ny) const
+{
+  unsigned int n = m_region_x.size();
+  nx = x; ny = y;
+  if(n < 3)
+    return(1e9);
+
+  double best = 1e18;
+  for(unsigned int i=0, j=n-1; i<n; j=i++) {
+    double ax = m_region_x[j], ay = m_region_y[j];
+    double bx = m_region_x[i], by = m_region_y[i];
+    double dx = bx - ax, dy = by - ay;
+    double L2 = (dx*dx) + (dy*dy);
+    double t  = (L2 <= 0) ? 0.0 : (((x-ax)*dx) + ((y-ay)*dy)) / L2;
+    if(t < 0) t = 0;
+    if(t > 1) t = 1;
+    double px = ax + t*dx, py = ay + t*dy;
+    double d  = hypot(x-px, y-py);
+    if(d < best) {
+      best = d;
+      nx = px; ny = py;
+    }
+  }
+  return(best);
+}
+
+//---------------------------------------------------------
+// Procedure: nudgeIntoRegion()
+//   A target clicked near the op-region edge would send the boat round a
+//   loop that crosses the boundary (the click itself being inside is not
+//   enough -- the whole circle has to fit). Pull the point straight in,
+//   away from the nearest edge, until loop_radius+loop_margin of water
+//   fits around it. Returns false if even that can't be achieved.
+
+bool ArrivalSync::nudgeIntoRegion(double& x, double& y) const
+{
+  if(m_region_x.size() < 3)
+    return(true);
+  double need = m_loop_radius + m_loop_margin;
+
+  for(int iter=0; iter<12; iter++) {
+    double nx = 0, ny = 0;
+    double d = regionClearance(x, y, nx, ny);
+    if(d >= need)
+      return(true);
+
+    // Push away from the nearest edge point (that direction is inward,
+    // since the caller has already checked the point is inside).
+    double dx = x - nx, dy = y - ny;
+    double L  = hypot(dx, dy);
+    if(L < 1e-6) {
+      // Sitting exactly on the edge: aim at the region's centroid instead.
+      double cx = 0, cy = 0;
+      for(unsigned int k=0; k<m_region_x.size(); k++) {
+        cx += m_region_x[k];
+        cy += m_region_y[k];
+      }
+      cx /= (double)m_region_x.size();
+      cy /= (double)m_region_y.size();
+      dx = cx - x; dy = cy - y;
+      L  = hypot(dx, dy);
+      if(L < 1e-6)
+        return(false);
+    }
+    x += (dx/L) * (need - d + 0.5);
+    y += (dy/L) * (need - d + 0.5);
+  }
+
+  double nx = 0, ny = 0;
+  return(regionClearance(x, y, nx, ny) >= need);
 }
 
 //---------------------------------------------------------
@@ -677,58 +783,58 @@ void ArrivalSync::runPendingCmd()
 }
 
 //---------------------------------------------------------
-// Procedure: doDisperse()
-//   Send every boat outward to its own corner of the fixed square. Corners
-//   are handed out in CYCLIC ORDER (boats sorted by their angle round the
-//   ring centre, corners likewise) using whichever rotation gives the least
-//   total travel. That is the "nearest corner" assignment AND it guarantees
-//   no two boats cross paths on the way out.
+// Procedure: cyclicAssign()
+//   Hand out a set of target points so each boat takes the nearest one AND
+//   no two boats cross paths. Both sets are sorted by angle round the ring
+//   centre, then every cyclic rotation is tried and the one with the least
+//   total travel wins. Sorting by angle is what rules out crossings: the
+//   boats keep their rotational order. Fills 'boats' (names) and 'tidx'
+//   (index into tx/ty) in parallel.
 
-void ArrivalSync::doDisperse()
+void ArrivalSync::cyclicAssign(const vector<double>& tx, const vector<double>& ty,
+                               vector<string>& boats, vector<unsigned int>& tidx)
 {
-  unsigned int n = m_square_x.size();
-  if(n == 0) {
-    reportRunWarning("DISPERSE ignored: no square configured");
+  boats.clear();
+  tidx.clear();
+  unsigned int n = tx.size();
+  if((n == 0) || (ty.size() != n))
     return;
-  }
 
-  // Boats with a known position, sorted by angle around the ring centre.
-  vector<pair<double,string> > boats;
+  // Boats with a known position, by angle round the ring centre.
+  vector<pair<double,string> > bs;
   for(unsigned int i=0; i<m_vehicles.size(); i++) {
     string v = m_vehicles[i];
     if(!m_have_nav[v])
       continue;
-    boats.push_back(make_pair(actualAngleDeg(v), v));
+    bs.push_back(make_pair(actualAngleDeg(v), v));
   }
-  if(boats.empty()) {
-    reportRunWarning("DISPERSE ignored: no boat positions yet");
+  if(bs.empty())
     return;
-  }
-  sort(boats.begin(), boats.end(),
+  sort(bs.begin(), bs.end(),
        [](const pair<double,string>& a, const pair<double,string>& b){
          return a.first < b.first; });
 
-  // The corners, sorted by angle around that same centre.
-  vector<pair<double,unsigned int> > cors;
+  // Targets, by angle round that same centre.
+  vector<pair<double,unsigned int> > ts;
   for(unsigned int k=0; k<n; k++) {
-    double a = atan2(m_square_y[k]-m_circle_y, m_square_x[k]-m_circle_x) * (180.0/M_PI);
+    double a = atan2(ty[k]-m_circle_y, tx[k]-m_circle_x) * (180.0/M_PI);
     if(a < 0) a += 360;
-    cors.push_back(make_pair(a, k));
+    ts.push_back(make_pair(a, k));
   }
-  sort(cors.begin(), cors.end(),
+  sort(ts.begin(), ts.end(),
        [](const pair<double,unsigned int>& a, const pair<double,unsigned int>& b){
          return a.first < b.first; });
 
-  // Pick the cyclic rotation with the least total travel.
-  unsigned int nb = boats.size();
+  // The rotation with the least total travel.
+  unsigned int nb = bs.size();
   unsigned int best_rot = 0;
   double best_total = -1;
   for(unsigned int rot=0; rot<n; rot++) {
     double total = 0;
     for(unsigned int i=0; i<nb; i++) {
-      unsigned int ci = cors[(i+rot) % n].second;
-      string v = boats[i].second;
-      total += hypot(m_square_x[ci]-m_nav_x[v], m_square_y[ci]-m_nav_y[v]);
+      unsigned int ti = ts[(i+rot) % n].second;
+      string v = bs[i].second;
+      total += hypot(tx[ti]-m_nav_x[v], ty[ti]-m_nav_y[v]);
     }
     if((best_total < 0) || (total < best_total)) {
       best_total = total;
@@ -736,10 +842,35 @@ void ArrivalSync::doDisperse()
     }
   }
 
-  // Send each boat out to its corner.
   for(unsigned int i=0; i<nb; i++) {
-    unsigned int ci = cors[(i+best_rot) % n].second;
-    string v = boats[i].second;
+    boats.push_back(bs[i].second);
+    tidx.push_back(ts[(i+best_rot) % n].second);
+  }
+}
+
+//---------------------------------------------------------
+// Procedure: doDisperse()
+//   Send every boat outward to its own corner of the fixed square, each
+//   taking the nearest corner without crossing anyone (see cyclicAssign).
+
+void ArrivalSync::doDisperse()
+{
+  if(m_square_x.empty()) {
+    reportRunWarning("DISPERSE ignored: no square configured");
+    return;
+  }
+
+  vector<string> boats;
+  vector<unsigned int> idx;
+  cyclicAssign(m_square_x, m_square_y, boats, idx);
+  if(boats.empty()) {
+    reportRunWarning("DISPERSE ignored: no boat positions yet");
+    return;
+  }
+
+  for(unsigned int i=0; i<boats.size(); i++) {
+    string v = boats[i];
+    unsigned int ci = idx[i];
     Notify(m_disp_update_var + "_" + toupper(v),
            squareSpec(m_square_x[ci], m_square_y[ci], v));
     Notify(m_disp_flag_var + "_" + toupper(v), "true");
@@ -752,19 +883,35 @@ void ArrivalSync::doDisperse()
 
 //---------------------------------------------------------
 // Procedure: doAssemble()
-//   Drop the square and re-form the ring by re-running the proven run-in:
-//   clear DISPERSE + SLOTTED on every boat so goto_slot picks up again, and
-//   let the arrival-sync passes bring them all to their cardinal slots at
-//   the same moment. No stagger -- they are already well spread out.
+//   Drop the square and re-form the ring by re-running the proven run-in.
+//   Each boat is given the ring slot NEAREST its corner (cyclic, so nobody
+//   crosses) rather than its canonical cardinal -- that slot can be
+//   diagonally opposite, which used to send all four straight through the
+//   middle of the formation. The slot point is pushed to goto_slot via
+//   SLOT_UPDATE, and the phase offsets are re-anchored to match.
 
 void ArrivalSync::doAssemble()
 {
+  vector<string> boats;
+  vector<unsigned int> idx;
+  cyclicAssign(m_slot0_x, m_slot0_y, boats, idx);
+
+  for(unsigned int i=0; i<boats.size(); i++) {
+    string v = boats[i];
+    unsigned int si = idx[i];
+    m_slot_x[v] = m_slot0_x[si];
+    m_slot_y[v] = m_slot0_y[si];
+    Notify(m_update_var + "_" + toupper(v),
+           "point=" + doubleToStringX(m_slot_x[v],2) + "," +
+                      doubleToStringX(m_slot_y[v],2));
+  }
+
   for(unsigned int i=0; i<m_vehicles.size(); i++) {
     string v = m_vehicles[i];
     Notify(m_disp_flag_var + "_" + toupper(v), "false");   // -> ENCIRCLING
     Notify(m_slotted_var   + "_" + toupper(v), "false");   // -> re-run goto_slot
     m_arrived[v]        = false;
-    m_phase_off[v]      = slotAngleDeg(v);  // back to the canonical cardinals
+    m_phase_off[v]      = slotAngleDeg(v);  // uses the slot just assigned
     m_release_offset[v] = 0;                // everyone released at once
     m_cmd_speed.erase(v);                   // clear throttles so fresh speeds post
     m_orbit_cmd.erase(v);
@@ -853,6 +1000,8 @@ bool ArrivalSync::addVehicle(const string& value)
   m_vehicles.push_back(name);
   m_slot_x[name]   = atof(sx.c_str());
   m_slot_y[name]   = atof(sy.c_str());
+  m_slot0_x.push_back(atof(sx.c_str()));   // canonical: restored on each deploy
+  m_slot0_y.push_back(atof(sy.c_str()));
   m_arrived[name]  = false;
   m_have_nav[name] = false;
   return(true);
@@ -920,6 +1069,8 @@ bool ArrivalSync::OnStartUp()
       handled = setBooleanOnString(m_enable_investigate, value);
     else if(param == "loop_radius")
       handled = setDoubleOnString(m_loop_radius, value);
+    else if(param == "loop_margin")
+      handled = setDoubleOnString(m_loop_margin, value);
     else if(param == "loop_points")
       handled = setIntOnString(m_loop_points, value);
     else if(param == "investigate_speed")
@@ -1024,7 +1175,9 @@ bool ArrivalSync::buildReport()
   m_msgs << "max_speed:      " << doubleToStringX(m_max_speed,2) << " m/s" << endl;
   m_msgs << "stagger_time:   " << doubleToStringX(m_stagger_time,1) << " s (farthest released first)" << endl;
   m_msgs << "elapsed:        " << doubleToStringX(elapsed,1) << " s since deploy" << endl;
-  m_msgs << "common ETA (T): " << doubleToStringX(m_curr_T,1) << " s" << endl;
+  m_msgs << "common ETA (T): "
+         << ((m_curr_T > 0) ? (doubleToStringX(m_curr_T,1) + " s")
+                            : string("-  (nobody running in)")) << endl;
   if(m_enable_orbit_lock) {
     m_msgs << "orbit-lock:     ON  (center " << doubleToStringX(m_circle_x,0) << ","
            << doubleToStringX(m_circle_y,0) << " r" << doubleToStringX(m_circle_rad,1)
@@ -1064,7 +1217,10 @@ bool ArrivalSync::buildReport()
     string slot = doubleToStringX(m_slot_x[v],1) + "," + doubleToStringX(m_slot_y[v],1);
     string dist = m_dist.count(v) ? doubleToStringX(m_dist[v],1) : "-";
     string rel  = m_release_offset.count(v) ? (doubleToStringX(m_release_offset[v],0)+"s") : "-";
-    string spd  = m_cmd_speed.count(v) ? doubleToStringX(m_cmd_speed[v],2) : "-";
+    // Run-in speed only means something while the boat is actually running in.
+    string spd  = "-";
+    if(!m_arrived[v] && !m_dispersed && m_cmd_speed.count(v))
+      spd = doubleToStringX(m_cmd_speed[v],2);
     string perr, ospd;
     if(m_enable_orbit_lock && m_arrived[v]) {
       perr = m_phase_err.count(v) ? (doubleToStringX(m_phase_err[v],1)+"deg") : "-";

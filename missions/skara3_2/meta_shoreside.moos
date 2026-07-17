@@ -110,6 +110,11 @@ ProcessConfig = pArrivalSync
   enable_investigate = true
   region            = -32,-87:14,-15:106,-56:103,-164:18,-178
   loop_radius       = 8
+  // A click near the op-region edge is nudged inward until loop_radius +
+  // loop_margin of water fits around it, so the loop can't walk the boat
+  // over the boundary. Boats fly ~2 m wider than the commanded 8 m (turn
+  // radius), so 4 covers that overshoot plus a buffer.
+  loop_margin       = 4
   loop_points       = 8
   investigate_speed = 2.0
   target_var        = TARGET_DETECT
