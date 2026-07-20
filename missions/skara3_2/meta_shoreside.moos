@@ -112,9 +112,10 @@ ProcessConfig = pArrivalSync
   loop_radius       = 8
   // A click near the op-region edge is nudged inward until loop_radius +
   // loop_margin of water fits around it, so the loop can't walk the boat
-  // over the boundary. Boats fly ~2 m wider than the commanded 8 m (turn
-  // radius), so 4 covers that overshoot plus a buffer.
-  loop_margin       = 4
+  // over the boundary. A boat investigating from a distant DISPERSE corner
+  // swings a wide first pass (~13 m vs the commanded 8 m), so 7 covers that
+  // ~5 m overshoot plus a buffer (ring-case overshoot is only ~2 m).
+  loop_margin       = 7
   loop_points       = 8
   investigate_speed = 2.0
   target_var        = TARGET_DETECT
