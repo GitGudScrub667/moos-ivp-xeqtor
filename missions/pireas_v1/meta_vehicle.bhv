@@ -1,0 +1,300 @@
+//*******************************************************
+// FILE: meta_vehicle.bhv   (pireas_v1 - $(VNAME))
+//   Fixed-slot encircle:
+//     DEPLOY  -> transit to this boat's N/E/S/W slot at a
+//                pre-computed speed (all boats arrive together),
+//                then orbit the common ring, evenly spaced.
+//     RETURN  -> drop the ring, go home, hold station at home.
+//   Never station-keeps on the ring. COLREGS avoidance + op-region.
+//*******************************************************
+
+initialize DEPLOY       = false
+initialize RETURN       = false
+initialize STATION_KEEP = false
+initialize SLOTTED      = false
+initialize AVOID        = true
+initialize INVESTIGATE  = false
+initialize DISPERSE     = false
+
+//---------------------------------------------------
+set MODE = ACTIVE {
+  DEPLOY = true
+} INACTIVE
+
+set MODE = RETURNING {
+  MODE = ACTIVE
+  RETURN = true
+}
+
+set MODE = INVESTIGATING {
+  MODE = ACTIVE
+  RETURN = false
+  INVESTIGATE = true
+}
+
+// Square (DISPERSE) formation. A target detour still outranks it: an
+// investigating boat leaves its corner, circles the target, then drops
+// back to DISPERSED and its loiter re-acquires the corner on its own.
+set MODE = DISPERSED {
+  MODE = ACTIVE
+  RETURN = false
+  INVESTIGATE = false
+  DISPERSE = true
+}
+
+set MODE = ENCIRCLING {
+  MODE = ACTIVE
+  RETURN = false
+  INVESTIGATE = false
+  DISPERSE = false
+}
+
+//----------------------------------------------
+// 1. Transit to this boat's assigned slot on the ring.
+//    The speed here is just a starting default; pArrivalSync on the
+//    shoreside overrides it live (via updates=SLOT_UPDATE) so all four
+//    boats reach their N/E/S/W slots simultaneously. On arrival, flip
+//    SLOTTED -> hand off to the orbit behaviour below.
+Behavior = BHV_Waypoint
+{
+  name       = goto_slot
+  pwt        = 100
+  condition  = MODE == ENCIRCLING
+  condition  = SLOTTED = false
+  updates    = SLOT_UPDATE
+  perpetual  = true
+  endflag    = SLOTTED = true
+
+  speed          = 0.0
+  capture_radius = 5.0
+  slip_radius    = 12.0
+  lead           = 8
+  point          = $(SLOT_POS)
+
+  visual_hints = nextpt_color=green, nextpt_vertex_size=6
+  visual_hints = vertex_color=green, edge_color=gray60
+}
+
+//----------------------------------------------
+// 2. Orbit the common ring (same circle for all boats). Even
+//    spacing is set by the simultaneous slot arrival and held
+//    because every boat orbits CCW at the same ORBIT_SPD.
+Behavior = BHV_Loiter
+{
+  name       = encircle
+  pwt        = 100
+  condition  = MODE == ENCIRCLING
+  condition  = SLOTTED = true
+  updates    = ENCIRCLE_UPDATE
+  perpetual  = true
+
+  speed        = $(ORBIT_SPD)
+  clockwise    = false
+  radius       = 5.0
+  nm_radius    = 12.0
+  acquire_dist = 8
+
+  polygon = radial:: x=$(CIRCLE_X), y=$(CIRCLE_Y), radius=$(CIRCLE_RAD), pts=16, snap=1, label=ring
+
+  visual_hints = edge_color=gray50, vertex_color=$(COLOR)
+  visual_hints = nextpt_color=white, nextpt_lcolor=khaki
+  visual_hints = edge_size=1, vertex_size=2
+}
+
+//----------------------------------------------
+// 2b. Target investigation. When the shoreside (pArrivalSync) picks
+//     THIS boat as the closest free investigator, it posts
+//     INVESTIGATE_<VNAME>=true (-> INVESTIGATING mode) plus a live
+//     waypoint list via INVESTIGATE_UPDATE. The shoreside drives the
+//     WHOLE detour: first the 8-point loop around the target, then a
+//     radial rejoin waypoint = the NEAREST ring point (so the boat comes
+//     straight back onto the ring without chording across the interior).
+//     This behaviour just follows those waypoints (perpetual, no self-
+//     terminate). On finishing the loop it fires INVESTIGATE_DONE=<vname>
+//     as a "circled it, begin rejoin" ping. Once the boat reaches the
+//     ring the shoreside re-anchors the formation (this boat keeps the
+//     spot it re-entered; the other three re-even around it) and flips
+//     INVESTIGATE->false -> mode falls back to ENCIRCLING.
+Behavior = BHV_Waypoint
+{
+  name       = bhv_investigate
+  pwt        = 100
+  condition  = MODE == INVESTIGATING
+  updates    = INVESTIGATE_UPDATE
+  perpetual  = true
+  endflag    = INVESTIGATE_DONE = $(VNAME)
+
+  speed          = 2.0
+  capture_radius = 4.0
+  slip_radius    = 10.0
+  repeat         = 0
+  points         = $(SLOT_POS)
+
+  visual_hints = nextpt_color=magenta, nextpt_vertex_size=5
+  visual_hints = vertex_color=magenta, edge_color=magenta
+}
+
+//----------------------------------------------
+// 2c. Square (DISPERSE) formation. The shoreside picks which corner of
+//     the square THIS boat takes (nearest, without any two boats crossing)
+//     and sends it as a small loiter circle via DISPERSE_UPDATE. This one
+//     behaviour does the whole job: BHV_Loiter's own acquisition flies the
+//     boat outward off the ring to that corner, then holds a tight circle
+//     there. ASSEMBLE just clears DISPERSE -> mode falls back to ENCIRCLING
+//     and the normal run-in machinery re-forms the ring.
+Behavior = BHV_Loiter
+{
+  name       = disperse_loiter
+  pwt        = 100
+  condition  = MODE == DISPERSED
+  updates    = DISPERSE_UPDATE
+  perpetual  = true
+
+  speed        = 2.0
+  clockwise    = false
+  radius       = 4.0
+  nm_radius    = 8.0
+  acquire_dist = 10
+
+  // Placeholder only: the real corner is set live by pArrivalSync on DISPERSE.
+  polygon = radial:: x=$(CIRCLE_X), y=$(CIRCLE_Y), radius=8, pts=8, snap=1, label=$(VNAME)_sq
+
+  visual_hints = edge_color=$(COLOR), vertex_color=$(COLOR)
+  visual_hints = nextpt_color=white, nextpt_lcolor=khaki
+  visual_hints = edge_size=1, vertex_size=2
+}
+
+//----------------------------------------------
+// 3. Return home when RETURN is set. On reaching within capture_radius
+//    (5 m) of home, DEPLOY -> false: the boat goes INACTIVE, the helm
+//    posts all-stop, and it coasts to a dead stop and stays there (no
+//    station-keeping). SLOTTED reset so a later DEPLOY re-slots it.
+Behavior = BHV_Waypoint
+{
+  name       = waypt_return
+  pwt        = 100
+  condition  = MODE == RETURNING
+  updates    = RETURN_UPDATE
+  perpetual  = true
+  endflag    = DEPLOY = false
+  endflag    = SLOTTED = false
+
+  speed          = $(ORBIT_SPD)
+  capture_radius = 5.0
+  slip_radius    = 10.0
+  point          = $(RETURN_POS)
+
+  visual_hints = nextpt_color=red, nextpt_lcolor=red
+  visual_hints = vertex_color=red, edge_color=red
+}
+
+//----------------------------------------------
+// 4. Dynamic COLREGS contact avoidance (spawns per contact).
+Behavior = BHV_AvdColregsV22
+{
+  name       = avdcol_
+  pwt        = 350
+  condition  = AVOID = true
+  condition  = MODE == ACTIVE
+  updates    = CONTACT_INFO
+  templating = spawn
+  endflag    = CONTACT_RESOLVED = $[CONTACT]
+
+  contact          = to-be-set
+  on_no_contact_ok = true
+  extrapolate      = true
+  decay            = 30,60
+
+  headon_only       = false
+  use_refinery      = true
+
+  pwt_outer_dist    = 20
+  pwt_inner_dist    = 8
+  completed_dist    = 35
+  min_util_cpa_dist = 5
+  max_util_cpa_dist = 10
+  pwt_grade         = linear
+}
+
+//----------------------------------------------
+// 5. Operating-region fence (3-ring soft/halt boundary).
+Behavior = BHV_OpRegionV24
+{
+  name      = opregion
+  pwt       = 300
+  condition = DEPLOY = true
+
+  core_poly = pts={-190,-0.9: -190,-86: -76,-86: -16,6: -79,4}
+
+  save_dist   = 3
+  halt_dist   = 15
+  recover_spd = 0.6
+
+  visual_hints = edge_size = 1
+  visual_hints = save_edge_color = gray30
+  visual_hints = halt_edge_color = gray40
+}
+
+//----------------------------------------------
+// 6. Three static no-go buoy zones (from the rescue_pireas op-area).
+//    Octagon obstacles ~4 m radius. Avoided in every ACTIVE sub-mode
+//    (encircle / investigate / disperse / return). b3 is the ring
+//    centre, so during a normal orbit boats stay ~14 m off it and this
+//    never fires there; it matters on deploy transit + investigate/
+//    disperse detours that pass near a buoy.
+Behavior = BHV_AvoidObstacleV24
+{
+  name       = avdob_buoy_1
+  pwt        = 350
+  condition  = AVOID = true
+  condition  = MODE == ACTIVE
+  perpetual  = true
+
+  polygon    = pts={-31,-6:-32.17,-3.17:-35,-2:-37.83,-3.17:-39,-6:-37.83,-8.83:-35,-10:-32.17,-8.83}, label=buoy_1
+
+  allowable_ttc     = 20
+  pwt_outer_dist    = 10
+  pwt_inner_dist    = 6
+  completed_dist    = 500
+  min_util_cpa_dist = 4
+  max_util_cpa_dist = 8
+  use_refinery      = true
+}
+
+Behavior = BHV_AvoidObstacleV24
+{
+  name       = avdob_buoy_2
+  pwt        = 350
+  condition  = AVOID = true
+  condition  = MODE == ACTIVE
+  perpetual  = true
+
+  polygon    = pts={-58.5,-17.9:-59.67,-15.07:-62.5,-13.9:-65.33,-15.07:-66.5,-17.9:-65.33,-20.73:-62.5,-21.9:-59.67,-20.73}, label=buoy_2
+
+  allowable_ttc     = 20
+  pwt_outer_dist    = 10
+  pwt_inner_dist    = 6
+  completed_dist    = 500
+  min_util_cpa_dist = 4
+  max_util_cpa_dist = 8
+  use_refinery      = true
+}
+
+Behavior = BHV_AvoidObstacleV24
+{
+  name       = avdob_buoy_3
+  pwt        = 350
+  condition  = AVOID = true
+  condition  = MODE == ACTIVE
+  perpetual  = true
+
+  polygon    = pts={-91,-28:-92.17,-25.17:-95,-24:-97.83,-25.17:-99,-28:-97.83,-30.83:-95,-32:-92.17,-30.83}, label=buoy_3
+
+  allowable_ttc     = 20
+  pwt_outer_dist    = 10
+  pwt_inner_dist    = 6
+  completed_dist    = 500
+  min_util_cpa_dist = 4
+  max_util_cpa_dist = 8
+  use_refinery      = true
+}
