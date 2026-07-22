@@ -1,0 +1,224 @@
+//*******************************************************
+// FILE: meta_shoreside.moos   (pireas_v2 - Pireas cove)
+//   Shoreside community: viewer + broker + node-comms relay.
+//*******************************************************
+
+ServerHost = localhost
+ServerPort = $(MOOS_PORT)
+Community  = shoreside
+
+#include plugs.moos <origin_warp>
+
+//--------------------------------------------------------
+ProcessConfig = ANTLER
+{
+  MSBetweenLaunches = 100
+
+  Run = MOOSDB          @ NewConsole = false
+  Run = pMarineViewer   @ NewConsole = false
+  Run = pLogger         @ NewConsole = false
+  Run = uProcessWatch   @ NewConsole = false
+  Run = pShare          @ NewConsole = false
+  Run = pHostInfo       @ NewConsole = false
+  Run = uFldShoreBroker @ NewConsole = false
+  Run = uFldNodeComms   @ NewConsole = false
+  Run = pArrivalSync    @ NewConsole = false
+  Run = pRealm          @ NewConsole = false
+}
+
+#include plugs.moos <pShare>
+#include plugs.moos <pHostInfo>
+#include plugs.moos <uProcessWatch>
+
+//--------------------------------------------------
+// uFldShoreBroker config block
+//   qbridge FOO  ==  bridge src=FOO_$V alias=FOO  +  src=FOO_ALL alias=FOO
+
+ProcessConfig = uFldShoreBroker
+{
+  AppTick   = 1
+  CommsTick = 1
+
+  qbridge = DEPLOY, RETURN, STATION_KEEP
+  qbridge = NODE_REPORT, NODE_MESSAGE
+  qbridge = MOOS_MANUAL_OVERRIDE, APPCAST_REQ
+  qbridge = SLOT_UPDATE
+  qbridge = ENCIRCLE_UPDATE
+  qbridge = DISPERSE, DISPERSE_UPDATE
+  qbridge = SLOTTED
+}
+
+//--------------------------------------------------
+// uFldNodeComms config block
+//   Relays each vehicle's NODE_REPORT to the others so the
+//   per-vehicle contact manager + COLREGS avoidance can see
+//   neighbours. comms_range set large: the whole cove is small.
+
+ProcessConfig = uFldNodeComms
+{
+  AppTick   = 2
+  CommsTick = 2
+
+  comms_range      = 500
+  critical_range   = 25
+  min_msg_interval = 0
+  max_msg_length   = 1000
+
+  view_node_rpt_pulses = false
+}
+
+//--------------------------------------------------
+// pArrivalSync config block
+//   (1) run-in: commands each boat's speed so all four reach their ring
+//       slots at the same time (staggered, farthest first).
+//   (2) orbit phase-lock: once arrived, each boat tracks a virtual point
+//       sweeping the ring at omega=orbit_speed/radius, phase = its slot
+//       angle. Speed is modulated to null its own phase error -> exactly
+//       even 90-deg spacing, no inter-boat coupling.
+//   Slots MUST match the goto_slot points in meta_vehicle.bhv and the
+//   ring in the encircle behavior (init_field.sh vslotpos / launch_vehicle CIRCLE_*).
+
+ProcessConfig = pArrivalSync
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  max_speed        = 3.0
+  min_speed        = 0.4
+  min_arrival_time = 8
+  capture_dist     = 6
+  stagger_time     = 5     // secs between boat releases (farthest first)
+
+  deploy_var = DEPLOY_ALL
+  return_var = RETURN_ALL
+  update_var = SLOT_UPDATE
+
+  // Orbit phase-lock (this is the pireas_v2 improvement over the base mission)
+  enable_orbit_lock = true
+  circle_x    = -144
+  circle_y    = -43
+  circle_rad  = 21.5
+  orbit_speed = 2.0
+  orbit_gain  = 0.03      // m/s of speed correction per degree of phase error
+  orbit_min   = 1.0
+  orbit_max   = 3.5      // headroom for the re-spacing boats to catch up on rejoin
+  orbit_var   = ENCIRCLE_UPDATE
+
+  // DISPERSE / ASSEMBLE square formation (pireas_v2 feature).
+  // Axis-aligned square centred on the ring (-144,-43), half-side 28.52
+  // (scaled x1.15 with the ring), so it CONTAINS the r=21.5 ring (no
+  // crossing) and its corners sit outside the ring for the outward disperse.
+  // Corners kept clear of the op-region edge and the (eastern) buoys. On
+  // DISPERSE each boat takes its nearest corner (cyclic order so no two cross).
+  // Clearances (corner loiters modelled at their audited 1.27x size):
+  // ~4.2 m to the op-region edge, ~10.4 m to the nearest buoy zone.
+  enable_disperse   = true
+  square            = -115.48,-14.48:-172.52,-14.48:-172.52,-71.52:-115.48,-71.52
+  square_radius     = 8        // turn-radius floor; NOT scaled with the formation
+  disperse_speed    = 2.0
+  disperse_cmd_var  = DISPERSE_CMD
+  // Forward-bias for BOTH transitions, broken on the nearest-target tie:
+  //  - DISPERSE: each boat peels off to the corner AHEAD in the orbit (CCW)
+  //    direction (tangent exit) instead of turning back across the ring.
+  //  - ASSEMBLE: each boat gets the ring slot it can ENTER moving forward, so
+  //    it slides onto the orbit tangentially instead of reaching the ring and
+  //    U-turning inward toward the centre no-go zone.
+  // Still non-crossing, no two boats share a target. disperse_fwd_penalty
+  // (default 0.4) tunes how hard it prefers forward; raise if a boat reverses.
+  disperse_forward_bias = true
+
+  vehicle = abe, -122.5, -43    // E
+  vehicle = ben, -144, -21.5    // N
+  vehicle = cal, -165.5, -43    // W
+  vehicle = deb, -144, -64.5    // S
+}
+
+//--------------------------------------------------
+// pLogger config block
+
+ProcessConfig = pLogger
+{
+  AppTick   = 10
+  CommsTick = 10
+
+  File          = XLOG_SHORESIDE
+  PATH          = ./
+  AsyncLog      = true
+  FileTimeStamp = true
+  LogAuxSrc     = true
+
+  WildCardLogging = true
+  WildCardOmitPattern = *_STATUS
+  WildCardOmitPattern = DB_VARSUMMARY
+  WildCardOmitPattern = DB_RWSUMMARY
+  WildCardOmitPattern = *_ITER_GAP
+  WildCardOmitPattern = *_ITER_LEN
+}
+
+//--------------------------------------------------------
+// pMarineViewer config block  (Pireas cove chart)
+
+ProcessConfig = pMarineViewer
+{
+  AppTick    = 4
+  CommsTick  = 4
+
+  tiff_file            = moos_georef_20260616_081356.tif
+
+  set_pan_x            = -305
+  set_pan_y            = -138
+  zoom                 = 1.22
+  vehicles_shape_scale = 1.5
+  vehicles_name_mode   = names
+
+  hash_delta           = 50
+  hash_shade           = 0.22
+  hash_viewable        = true
+
+  trails_point_size    = 1
+  circle_viewable_all  = true
+
+  appcast_viewable     = true
+  appcast_color_scheme = indigo
+  nodes_font_size      = large
+  procs_font_size      = large
+  appcast_font_size    = medium
+
+  scope = NODE_REPORT
+  scope = DEPLOY_ALL
+
+  button_one   = DEPLOY  # DEPLOY_ALL=true
+  button_one   = MOOS_MANUAL_OVERRIDE_ALL=false
+  button_one   = RETURN_ALL=false
+  button_one   = STATION_KEEP_ALL=false
+
+  button_two   = RETURN  # RETURN_ALL=true
+  button_two   = STATION_KEEP_ALL=false
+
+  button_three = ALL-STOP # DEPLOY_ALL=false
+
+  // DISPERSE / ASSEMBLE. These post a shoreside-only command var --
+  // pArrivalSync picks the corner assignment and only then sends each
+  // boat its own DISPERSE_<V> + DISPERSE_UPDATE_<V>. (Never post
+  // DISPERSE_ALL directly: that would reach the boats with no corner set.)
+  button_four  = DISPERSE # DISPERSE_CMD=true
+  button_five  = ASSEMBLE # DISPERSE_CMD=false
+}
+
+//--------------------------------------------------------
+// uProcessWatch config block
+
+ProcessConfig = uProcessWatch
+{
+  AppTick   = 1
+  CommsTick = 1
+
+  allow_retractions = true
+  watch_all = true
+
+  nowatch = uXMS*
+  nowatch = uPokeDB*
+  nowatch = uMAC*
+
+  summary_wait = 12
+}

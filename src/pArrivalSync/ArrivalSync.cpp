@@ -63,6 +63,8 @@ ArrivalSync::ArrivalSync()
   m_disp_flag_var      = "DISPERSE";
   m_disp_update_var    = "DISPERSE_UPDATE";
   m_slotted_var        = "SLOTTED";
+  m_disperse_forward_bias = false;   // off => cyclicAssign is pure nearest, as before
+  m_disperse_fwd_penalty  = 0.4;     // m per degree-behind; only used when bias is on
 
   // State
   m_target_count = 0;
@@ -792,7 +794,8 @@ void ArrivalSync::runPendingCmd()
 //   (index into tx/ty) in parallel.
 
 void ArrivalSync::cyclicAssign(const vector<double>& tx, const vector<double>& ty,
-                               vector<string>& boats, vector<unsigned int>& tidx)
+                               vector<string>& boats, vector<unsigned int>& tidx,
+                               double turn_penalty)
 {
   boats.clear();
   tidx.clear();
@@ -832,9 +835,21 @@ void ArrivalSync::cyclicAssign(const vector<double>& tx, const vector<double>& t
   for(unsigned int rot=0; rot<n; rot++) {
     double total = 0;
     for(unsigned int i=0; i<nb; i++) {
-      unsigned int ti = ts[(i+rot) % n].second;
+      unsigned int j  = (i+rot) % n;
+      unsigned int ti = ts[j].second;
       string v = bs[i].second;
       total += hypot(tx[ti]-m_nav_x[v], ty[ti]-m_nav_y[v]);
+      // Bias toward corners ahead in the orbit (CCW) direction: a corner
+      // behind the boat's current ring angle would make it turn back, so
+      // charge for it. Every rotation here is still order-preserving (no
+      // crossing); this only decides WHICH non-crossing rotation wins.
+      if(turn_penalty > 0) {
+        double disp = ts[j].first - bs[i].first;   // +ve => corner is CCW-ahead
+        while(disp > 180)  disp -= 360;
+        while(disp < -180) disp += 360;
+        if(disp < 0)
+          total += turn_penalty * (-disp);
+      }
     }
     if((best_total < 0) || (total < best_total)) {
       best_total = total;
@@ -862,7 +877,8 @@ void ArrivalSync::doDisperse()
 
   vector<string> boats;
   vector<unsigned int> idx;
-  cyclicAssign(m_square_x, m_square_y, boats, idx);
+  double tp = m_disperse_forward_bias ? m_disperse_fwd_penalty : 0.0;
+  cyclicAssign(m_square_x, m_square_y, boats, idx, tp);
   if(boats.empty()) {
     reportRunWarning("DISPERSE ignored: no boat positions yet");
     return;
@@ -894,7 +910,13 @@ void ArrivalSync::doAssemble()
 {
   vector<string> boats;
   vector<unsigned int> idx;
-  cyclicAssign(m_slot0_x, m_slot0_y, boats, idx);
+  // Same forward-bias as DISPERSE: hand each boat the ring slot it can ENTER
+  // moving forward (CCW), so it slides onto the orbit tangentially instead of
+  // reaching the ring and U-turning inward toward the centre. On the diagonal-
+  // corner geometry the two nearest slots tie, and the "behind" one forces the
+  // U-turn; the bias breaks the tie toward the slot ahead. Off => plain nearest.
+  double tp = m_disperse_forward_bias ? m_disperse_fwd_penalty : 0.0;
+  cyclicAssign(m_slot0_x, m_slot0_y, boats, idx, tp);
 
   for(unsigned int i=0; i<boats.size(); i++) {
     string v = boats[i];
@@ -1105,6 +1127,10 @@ bool ArrivalSync::OnStartUp()
       handled = setDoubleOnString(m_square_radius, value);
     else if(param == "disperse_speed")
       handled = setDoubleOnString(m_disperse_speed, value);
+    else if(param == "disperse_forward_bias")
+      handled = setBooleanOnString(m_disperse_forward_bias, value);
+    else if(param == "disperse_fwd_penalty")
+      handled = setDoubleOnString(m_disperse_fwd_penalty, value);
     else if(param == "disperse_cmd_var") {
       m_disperse_cmd_var = value; handled = true;
     }
@@ -1204,6 +1230,7 @@ bool ArrivalSync::buildReport()
     m_msgs << "disperse:       " << (m_dispersed ? "SQUARE" : "ring")
            << "  corners=" << m_square_x.size()
            << "  loiter r" << doubleToStringX(m_square_radius,1)
+           << "  fwd-bias=" << (m_disperse_forward_bias ? "on" : "off")
            << "  pending=" << pend << endl;
   }
   m_msgs << "speed cmds sent:" << m_posts << endl;

@@ -56,8 +56,12 @@ class ArrivalSync : public AppCastingMOOSApp
    double regionClearance(double x, double y, double& nx, double& ny) const;
    bool nudgeIntoRegion(double& x, double& y) const;  // pull a target in so its loop fits
    // Assign boats to target points without any two crossing paths.
+   // turn_penalty>0 adds a per-boat cost (m per degree) for corners that sit
+   // BEHIND the orbit (CCW) direction, so DISPERSE picks the non-crossing
+   // rotation that lets each boat peel off forward instead of turning back.
    void cyclicAssign(const std::vector<double>& tx, const std::vector<double>& ty,
-                     std::vector<std::string>& boats, std::vector<unsigned int>& tidx);
+                     std::vector<std::string>& boats, std::vector<unsigned int>& tidx,
+                     double turn_penalty = 0.0);
    std::string closestFreeBoat(double tx, double ty) const;
    void assignInvestigation();
    std::string loopSpec(double tx, double ty) const;   // "points=..." around target
@@ -125,6 +129,13 @@ class ArrivalSync : public AppCastingMOOSApp
    std::string m_disp_flag_var;     // post: DISPERSE_<VNAME> = true/false
    std::string m_disp_update_var;   // post: DISPERSE_UPDATE_<VNAME> = polygon=...
    std::string m_slotted_var;       // post: SLOTTED_<VNAME> = false (on assemble)
+   bool   m_disperse_forward_bias;  // DISPERSE + ASSEMBLE: prefer the target
+                                    // (corner or slot) in the orbit (CCW)
+                                    // direction, so boats peel off / enter the
+                                    // ring moving forward instead of turning
+                                    // back (no-cross preserved)
+   double m_disperse_fwd_penalty;   // m of extra assign-cost per degree a corner
+                                    // sits behind the orbit direction
 
    std::vector<std::string>       m_vehicles;   // vehicle names, in config order
    std::map<std::string, double>  m_slot_x;     // vname -> CURRENT slot x
