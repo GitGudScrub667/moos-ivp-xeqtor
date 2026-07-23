@@ -10,13 +10,14 @@
 #  their slots simultaneously.
 #------------------------------------------------------------
 
-# Start positions: clustered ESE of the ring around (-86,-56), well
-# clear of the DISPERSE square footprint (>=18 m), the no-go buoys
-# (>=18 m) and the op-region edge (>=18 m); headed W toward the ring.
-echo "x=-81,y=-52,heading=278" >  vpositions.txt
-echo "x=-90,y=-50,heading=277" >> vpositions.txt
-echo "x=-92,y=-60,heading=288" >> vpositions.txt
-echo "x=-82,y=-62,heading=287" >> vpositions.txt
+# Start positions: clustered E of the formation around (-68,-41), moved here
+# (was ~(-86,-56)) to clear the permanent MIO station + its no-go at
+# (-90.43,-52.25). Verified clear: op-edge >=11.5 m, MIO station >=18.9 m,
+# buoys >=15 m, square footprint >=38 m; headed W toward the ring.
+echo "x=-63,y=-37,heading=266" >  vpositions.txt
+echo "x=-73,y=-37,heading=265" >> vpositions.txt
+echo "x=-73,y=-45,heading=272" >> vpositions.txt
+echo "x=-63,y=-45,heading=271" >> vpositions.txt
 
 # Slot (cardinal) points on the common ring (center -144,-43 r 21.5).
 echo "-122.5,-43"   >  vslotpos.txt   # abe -> E

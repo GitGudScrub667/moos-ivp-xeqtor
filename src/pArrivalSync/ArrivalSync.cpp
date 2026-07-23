@@ -66,12 +66,24 @@ ArrivalSync::ArrivalSync()
   m_disperse_forward_bias = false;   // off => cyclicAssign is pure nearest, as before
   m_disperse_fwd_penalty  = 0.4;     // m per degree-behind; only used when bias is on
 
+  // MIO station (opt-in)
+  m_enable_mio     = false;
+  m_mio_x          = 0;
+  m_mio_y          = 0;
+  m_mio_radius     = 7.0;
+  m_mio_speed      = 2.0;
+  m_mio_cmd_var    = "MIO_CMD";
+  m_mio_flag_var   = "MIO";
+  m_mio_update_var = "MIO_UPDATE";
+
   // State
   m_target_count = 0;
   m_rejoin_px   = 1e18;   // sentinel: forces the first rejoin-point post
   m_rejoin_py   = 1e18;
   m_dispersed   = false;
   m_pending_cmd = CMD_NONE;
+  m_mio_boat      = "";
+  m_mio_returning = false;
   m_deployed    = false;
   m_returning   = false;
   m_staggered   = false;
@@ -133,6 +145,9 @@ bool ArrivalSync::OnNewMail(MOOSMSG_LIST &NewMail)
 
     else if(key == m_disperse_cmd_var)
       handleDisperseCmd(tolower(msg.GetString()) == "true");
+
+    else if(m_enable_mio && (key == m_mio_cmd_var))
+      handleMioCmd(tolower(msg.GetString()) == "true");
 
     else if(key == m_inv_done_var) {
       // The investigator finished circling the target. Begin the rejoin
@@ -226,6 +241,8 @@ bool ArrivalSync::Iterate()
       string v = m_vehicles[i];
       if(!m_have_nav[v] || m_arrived[v])
         continue;
+      if((v == m_mio_boat) && !m_mio_returning)
+        continue;   // out loitering the MIO station: not part of the run-in
 
       double d = m_dist[v];       // kept live at the top of Iterate()
 
@@ -273,8 +290,8 @@ bool ArrivalSync::Iterate()
       double omega_deg = (m_orbit_speed / m_circle_rad) * (180.0 / M_PI);
       for(unsigned int i=0; i<m_vehicles.size(); i++) {
         string v = m_vehicles[i];
-        if(!m_have_nav[v] || !m_arrived[v] || m_investigating[v])
-          continue;   // skip a boat that is off investigating a target
+        if(!m_have_nav[v] || !m_arrived[v] || m_investigating[v] || (v == m_mio_boat))
+          continue;   // skip a boat off investigating a target or out on the MIO station
 
         // Start the shared clock at the first arrival.
         if(!m_orbit_active) {
@@ -295,6 +312,15 @@ bool ArrivalSync::Iterate()
         if(spd < m_orbit_min) spd = m_orbit_min;
         postThrottled(m_orbit_var, m_orbit_cmd, v, spd);
       }
+    }
+
+    // The recalled MIO boat has transited back onto the ring: re-even the four
+    // to 90 deg around its re-entry point, then hand it back to encircling.
+    if(m_mio_returning && (m_mio_boat != "") &&
+       m_have_nav[m_mio_boat] && m_arrived[m_mio_boat]) {
+      respaceFormation(m_mio_boat);
+      m_mio_returning = false;
+      m_mio_boat      = "";
     }
 
   }
@@ -319,6 +345,8 @@ bool ArrivalSync::Iterate()
       cancelInvestigation();
     if(m_dispersed)
       cancelDisperse();
+    if(m_enable_mio)
+      cancelMio();
     m_pending_cmd  = CMD_NONE;
     m_staggered    = false;
     m_orbit_active = false;
@@ -760,6 +788,10 @@ void ArrivalSync::handleDisperseCmd(bool on)
 {
   if(!m_enable_disperse)
     return;
+  if(m_mio_boat != "") {
+    reportRunWarning("DISPERSE/ASSEMBLE ignored: an MIO is active");
+    return;
+  }
   if(m_investigator != "") {
     m_pending_cmd = (on ? CMD_DISPERSE : CMD_ASSEMBLE);
     return;
@@ -782,6 +814,141 @@ void ArrivalSync::runPendingCmd()
     doDisperse();
   else if((cmd == CMD_ASSEMBLE) && m_dispersed)
     doAssemble();
+}
+
+//---------------------------------------------------------
+// Procedure: handleMioCmd()
+//   MIO (true): send the closest ring boat out to guard the fixed station;
+//   END MIO (false): recall it. One boat / one station at a time; MIO runs
+//   only from the ring formation (not while dispersed).
+
+void ArrivalSync::handleMioCmd(bool on)
+{
+  if(!m_enable_mio)
+    return;
+  if(on) {
+    if(m_dispersed) {
+      reportRunWarning("MIO ignored: boats are dispersed");
+      return;
+    }
+    if(m_mio_boat != "")           // one boat out already
+      return;
+    doMio();
+  }
+  else {
+    if((m_mio_boat != "") && !m_mio_returning)
+      endMio();
+  }
+}
+
+//---------------------------------------------------------
+// Procedure: doMio()
+//   Pick the boat nearest the station, send it out to hold an r=mio_radius
+//   loiter there, and re-even the boats left on the ring to 360/N spacing.
+
+void ArrivalSync::doMio()
+{
+  string boat = closestFreeBoat(m_mio_x, m_mio_y);
+  if(boat == "") {
+    reportRunWarning("MIO ignored: no free boat on the ring yet");
+    return;
+  }
+  Notify(m_mio_update_var + "_" + toupper(boat), mioSpec());
+  Notify(m_mio_flag_var   + "_" + toupper(boat), "true");   // -> MIO_STATION
+  m_mio_boat      = boat;
+  m_mio_returning = false;
+  m_arrived[boat] = false;     // it has left the ring
+  m_orbit_cmd.erase(boat);
+  mioRespace();                // the remaining boats close up to even spacing
+}
+
+//---------------------------------------------------------
+// Procedure: mioSpec()
+//   BHV_Loiter update: the r=mio_radius circle the boat holds at the station.
+
+string ArrivalSync::mioSpec() const
+{
+  string spec = "polygon=radial:: x=" + doubleToStringX(m_mio_x,2) +
+                ", y=" + doubleToStringX(m_mio_y,2) +
+                ", radius=" + doubleToStringX(m_mio_radius,1) +
+                ", pts=12, snap=1, label=mio_station";
+  spec += " # speed=" + doubleToStringX(m_mio_speed,2);
+  return(spec);
+}
+
+//---------------------------------------------------------
+// Procedure: mioRespace()
+//   Re-anchor the phase offsets of the boats still on the ring so they orbit
+//   evenly spaced (360/N -- i.e. 120 deg once one of four has left). One boat
+//   is kept where it is, the rest spaced from it in angle order so none cross;
+//   the phase-lock then eases them into the new spacing.
+
+void ArrivalSync::mioRespace()
+{
+  if(!m_orbit_active || (m_circle_rad <= 0))
+    return;
+  double omega_deg = (m_orbit_speed / m_circle_rad) * (180.0 / M_PI);
+  double tt = m_curr_time - m_orbit_t0;
+
+  vector<pair<double,string> > ring;
+  for(unsigned int i=0; i<m_vehicles.size(); i++) {
+    string v = m_vehicles[i];
+    if(v == m_mio_boat)                 continue;
+    if(!m_have_nav[v] || !m_arrived[v]) continue;
+    ring.push_back(make_pair(actualAngleDeg(v), v));
+  }
+  if(ring.empty())
+    return;
+  sort(ring.begin(), ring.end(),
+       [](const pair<double,string>& a, const pair<double,string>& b){
+         return a.first < b.first; });
+
+  double anchor = ring[0].first;
+  double step   = 360.0 / (double)ring.size();
+  for(unsigned int k=0; k<ring.size(); k++) {
+    double slot_ang = anchor + step * (double)k;
+    m_phase_off[ring[k].second] = slot_ang - omega_deg * tt;
+    m_orbit_cmd.erase(ring[k].second);
+  }
+}
+
+//---------------------------------------------------------
+// Procedure: endMio()
+//   Recall the station boat: send it to the ring point nearest where it is
+//   now (re-running goto_slot), and mark it "returning" so the run-in drives
+//   it back. On arrival (in Iterate) respaceFormation() re-evens all four to
+//   90 deg around its re-entry point.
+
+void ArrivalSync::endMio()
+{
+  string v = m_mio_boat;
+  if(v == "" || !m_have_nav[v] || (m_circle_rad <= 0))
+    return;
+  double cur = actualAngleDeg(v);
+  double rad = cur * (M_PI / 180.0);
+  double sx  = m_circle_x + m_circle_rad * cos(rad);
+  double sy  = m_circle_y + m_circle_rad * sin(rad);
+  m_slot_x[v] = sx;
+  m_slot_y[v] = sy;
+  Notify(m_update_var   + "_" + toupper(v),
+         "point=" + doubleToStringX(sx,2) + "," + doubleToStringX(sy,2));
+  Notify(m_mio_flag_var + "_" + toupper(v), "false");   // leave MIO_STATION
+  Notify(m_slotted_var  + "_" + toupper(v), "false");   // re-run goto_slot
+  m_arrived[v]    = false;
+  m_mio_returning = true;
+}
+
+//---------------------------------------------------------
+// Procedure: cancelMio()
+//   Drop MIO without re-forming (field is returning or idle): clear the flag
+//   so the boat doesn't redeploy stuck in MIO_STATION.
+
+void ArrivalSync::cancelMio()
+{
+  if(m_mio_boat != "")
+    Notify(m_mio_flag_var + "_" + toupper(m_mio_boat), "false");
+  m_mio_boat      = "";
+  m_mio_returning = false;
 }
 
 //---------------------------------------------------------
@@ -1134,6 +1301,19 @@ bool ArrivalSync::OnStartUp()
     else if(param == "disperse_cmd_var") {
       m_disperse_cmd_var = value; handled = true;
     }
+    else if(param == "enable_mio")
+      handled = setBooleanOnString(m_enable_mio, value);
+    else if(param == "mio_x")
+      handled = setDoubleOnString(m_mio_x, value);
+    else if(param == "mio_y")
+      handled = setDoubleOnString(m_mio_y, value);
+    else if(param == "mio_radius")
+      handled = setDoubleOnString(m_mio_radius, value);
+    else if(param == "mio_speed")
+      handled = setDoubleOnString(m_mio_speed, value);
+    else if(param == "mio_cmd_var") {
+      m_mio_cmd_var = value; handled = true;
+    }
     else if(param == "square") {
       // "x1,y1:x2,y2:..." -> the fixed corners of the DISPERSE formation.
       m_square_x.clear();
@@ -1183,6 +1363,8 @@ void ArrivalSync::registerVariables()
   }
   if(m_enable_disperse)
     Register(m_disperse_cmd_var, 0);
+  if(m_enable_mio)
+    Register(m_mio_cmd_var, 0);
 }
 
 //------------------------------------------------------------
@@ -1232,6 +1414,15 @@ bool ArrivalSync::buildReport()
            << "  loiter r" << doubleToStringX(m_square_radius,1)
            << "  fwd-bias=" << (m_disperse_forward_bias ? "on" : "off")
            << "  pending=" << pend << endl;
+  }
+  if(m_enable_mio) {
+    string st = "(none)";
+    if(m_mio_boat != "")
+      st = m_mio_boat + (m_mio_returning ? " [returning]" : " [on station]");
+    m_msgs << "MIO:            " << st
+           << "  station=(" << doubleToStringX(m_mio_x,0) << ","
+           << doubleToStringX(m_mio_y,0) << ")  r"
+           << doubleToStringX(m_mio_radius,0) << endl;
   }
   m_msgs << "speed cmds sent:" << m_posts << endl;
   m_msgs << "============================================" << endl;

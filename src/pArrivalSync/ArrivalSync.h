@@ -78,6 +78,13 @@ class ArrivalSync : public AppCastingMOOSApp
    void drawTarget(const std::string& label, double x, double y,
                    const std::string& color);
    void eraseTarget(const std::string& label);
+   // MIO station (one boat guards a fixed loiter station; the rest re-space)
+   void handleMioCmd(bool on);        // MIO (true) / END MIO (false) button
+   void doMio();                      // send the closest boat out to the station
+   void endMio();                     // recall it; on arrival the four re-form (90)
+   void mioRespace();                 // the boats left on the ring re-even (120)
+   void cancelMio();                  // drop MIO (return / idle)
+   std::string mioSpec() const;       // BHV_Loiter update for the station
 
  private: // Configuration (run-in / arrival sync)
    double m_max_speed;          // cruise cap; the farthest boat runs at this
@@ -137,6 +144,16 @@ class ArrivalSync : public AppCastingMOOSApp
    double m_disperse_fwd_penalty;   // m of extra assign-cost per degree a corner
                                     // sits behind the orbit direction
 
+ private: // Configuration (MIO station, opt-in)
+   bool   m_enable_mio;
+   double m_mio_x;              // station center
+   double m_mio_y;
+   double m_mio_radius;         // loiter radius the boat holds at the station
+   double m_mio_speed;          // transit-out + loiter speed
+   std::string m_mio_cmd_var;   // subscribe: MIO_CMD (from the buttons)
+   std::string m_mio_flag_var;  // post: MIO_<VNAME> = true/false
+   std::string m_mio_update_var;// post: MIO_UPDATE_<VNAME> = polygon=...
+
    std::vector<std::string>       m_vehicles;   // vehicle names, in config order
    std::map<std::string, double>  m_slot_x;     // vname -> CURRENT slot x
    std::map<std::string, double>  m_slot_y;     // vname -> CURRENT slot y
@@ -183,6 +200,10 @@ class ArrivalSync : public AppCastingMOOSApp
    bool m_dispersed;                      // boats are out on the square
    int  m_pending_cmd;                    // queued button press (see CMD_* below)
    std::map<std::string, int> m_corner_of;  // vname -> square corner index (report)
+
+   // MIO state
+   std::string m_mio_boat;                // boat out on the MIO station ("" = none)
+   bool m_mio_returning;                  // that boat is transiting back to the ring
 
    double m_curr_T;             // last computed common arrival time (for report)
    unsigned int m_posts;        // count of speed commands sent (for report)

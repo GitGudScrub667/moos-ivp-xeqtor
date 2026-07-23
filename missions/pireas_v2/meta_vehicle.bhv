@@ -14,6 +14,7 @@ initialize STATION_KEEP = false
 initialize SLOTTED      = false
 initialize AVOID        = true
 initialize DISPERSE     = false
+initialize MIO          = false
 
 //---------------------------------------------------
 set MODE = ACTIVE {
@@ -25,16 +26,26 @@ set MODE = RETURNING {
   RETURN = true
 }
 
+// MIO: this boat is out guarding the fixed loiter station. Outranks the
+// ring/square modes; only RETURN (which drops MIO) is higher.
+set MODE = MIO_STATION {
+  MODE = ACTIVE
+  RETURN = false
+  MIO = true
+}
+
 // Square (DISPERSE) formation.
 set MODE = DISPERSED {
   MODE = ACTIVE
   RETURN = false
+  MIO = false
   DISPERSE = true
 }
 
 set MODE = ENCIRCLING {
   MODE = ACTIVE
   RETURN = false
+  MIO = false
   DISPERSE = false
 }
 
@@ -114,6 +125,36 @@ Behavior = BHV_Loiter
 
   // Placeholder only: the real corner is set live by pArrivalSync on DISPERSE.
   polygon = radial:: x=$(CIRCLE_X), y=$(CIRCLE_Y), radius=8, pts=8, snap=1, label=$(VNAME)_sq
+
+  visual_hints = edge_color=$(COLOR), vertex_color=$(COLOR)
+  visual_hints = nextpt_color=white, nextpt_lcolor=khaki
+  visual_hints = edge_size=1, vertex_size=2
+}
+
+//----------------------------------------------
+// 2c. MIO station. On MIO the shoreside picks the closest boat and posts
+//     MIO_<VNAME>=true (-> MIO_STATION mode) plus the station circle via
+//     MIO_UPDATE. This one loiter does the whole job: its acquisition flies
+//     the boat out to the station, then holds the r=7 circle around it. The
+//     3 boats left on the ring re-space to 120 deg (shoreside). END MIO clears
+//     MIO -> the shoreside sends this boat back to the ring and the four
+//     re-form to 90 deg. (The 4 m no-go at the station centre is section 8.)
+Behavior = BHV_Loiter
+{
+  name       = mio_loiter
+  pwt        = 100
+  condition  = MODE == MIO_STATION
+  updates    = MIO_UPDATE
+  perpetual  = true
+
+  speed        = 2.0
+  clockwise    = false
+  radius       = 7.0
+  nm_radius    = 12.0
+  acquire_dist = 10
+
+  // Placeholder only: the real station + radius are set live by pArrivalSync.
+  polygon = radial:: x=$(CIRCLE_X), y=$(CIRCLE_Y), radius=7, pts=12, snap=1, label=$(VNAME)_mio
 
   visual_hints = edge_color=$(COLOR), vertex_color=$(COLOR)
   visual_hints = nextpt_color=white, nextpt_lcolor=khaki
@@ -258,8 +299,8 @@ Behavior = BHV_AvoidObstacleV24
 // 7. SHOW-VESSEL no-go zone. During the show a sizeable vessel PARKS at
 //    the centre of the encircle ring (-144,-43). Modelled as an 8 m radius
 //    octagon obstacle so our boats are NEVER at risk of hitting it.
-//    The clean orbit sits 10.7 m off this zone (ring R=18.7 minus 8 m),
-//    just outside pwt_outer_dist (9), so it does NOT perturb normal
+//    The clean orbit sits 13.5 m off this zone (ring R=21.5 minus 8 m),
+//    well outside pwt_outer_dist (9), so it does NOT perturb normal
 //    encircling; it only fires when a path cuts toward the centre --
 //    notably the far-side (W) boat's straight deploy/return transit,
 //    which gets pushed around it.
@@ -283,5 +324,32 @@ Behavior = BHV_AvoidObstacleV24
   completed_dist    = 500
   min_util_cpa_dist = 5
   max_util_cpa_dist = 9
+  use_refinery      = true
+}
+
+//----------------------------------------------
+// 8. MIO STATION no-go. A 4 m object sits at the centre of the MIO loiter
+//    station (-90.43,-52.25); the guarding boat circles it at r=7 (see the
+//    mio_loiter behaviour, section 2c). Permanent obstacle, like the buoys.
+//    Its avoidance envelope is kept SMALL (pwt_outer_dist 2) so it never
+//    fights the r=7 loiter: the boat sits ~3 m outside this zone edge and the
+//    loiter's own outward bias holds it there. This is the hard backstop if a
+//    boat ever cuts in toward the object.
+Behavior = BHV_AvoidObstacleV24
+{
+  name       = avdob_mio_nogo
+  pwt        = 350
+  condition  = AVOID = true
+  condition  = MODE == ACTIVE
+  perpetual  = true
+
+  polygon    = pts={-86.43,-52.25:-87.60,-49.42:-90.43,-48.25:-93.26,-49.42:-94.43,-52.25:-93.26,-55.08:-90.43,-56.25:-87.60,-55.08}, label=mio_nogo
+
+  allowable_ttc     = 20
+  pwt_outer_dist    = 2
+  pwt_inner_dist    = 1
+  completed_dist    = 500
+  min_util_cpa_dist = 1
+  max_util_cpa_dist = 2
   use_refinery      = true
 }

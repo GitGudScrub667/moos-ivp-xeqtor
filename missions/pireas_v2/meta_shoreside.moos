@@ -45,6 +45,7 @@ ProcessConfig = uFldShoreBroker
   qbridge = SLOT_UPDATE
   qbridge = ENCIRCLE_UPDATE
   qbridge = DISPERSE, DISPERSE_UPDATE
+  qbridge = MIO, MIO_UPDATE
   qbridge = SLOTTED
 }
 
@@ -127,6 +128,18 @@ ProcessConfig = pArrivalSync
   // (default 0.4) tunes how hard it prefers forward; raise if a boat reverses.
   disperse_forward_bias = true
 
+  // MIO station. On the MIO button the closest boat leaves the ring, holds an
+  // r=mio_radius loiter around this fixed point, and the 3 boats left on the
+  // ring re-space to 120 deg; END MIO recalls it and the four re-form to 90.
+  // Station center is local (-90.43,-52.25) = Lat 37.93278911 Lon 23.62718844.
+  // The 4 m no-go at the centre is a static obstacle in meta_vehicle.bhv.
+  enable_mio  = true
+  mio_x       = -90.43
+  mio_y       = -52.25
+  mio_radius  = 7
+  mio_speed   = 2.0
+  mio_cmd_var = MIO_CMD
+
   vehicle = abe, -122.5, -43    // E
   vehicle = ben, -144, -21.5    // N
   vehicle = cal, -165.5, -43    // W
@@ -186,6 +199,7 @@ ProcessConfig = pMarineViewer
 
   scope = NODE_REPORT
   scope = DEPLOY_ALL
+  scope = MIO_CMD
 
   button_one   = DEPLOY  # DEPLOY_ALL=true
   button_one   = MOOS_MANUAL_OVERRIDE_ALL=false
@@ -203,6 +217,12 @@ ProcessConfig = pMarineViewer
   // DISPERSE_ALL directly: that would reach the boats with no corner set.)
   button_four  = DISPERSE # DISPERSE_CMD=true
   button_five  = ASSEMBLE # DISPERSE_CMD=false
+
+  // MIO / END MIO. Shoreside-only command var: pArrivalSync picks the closest
+  // boat, sends it to the station, and re-spaces the rest (120 deg); END MIO
+  // recalls it and the four re-form to 90 deg.
+  button_six   = MIO # MIO_CMD=true
+  button_seven = END-MIO # MIO_CMD=false
 }
 
 //--------------------------------------------------------
