@@ -16,7 +16,6 @@ ProcessConfig = ANTLER
   Run = MOOSDB           @ NewConsole = false
   Run = uProcessWatch    @ NewConsole = false
   Run = pShare           @ NewConsole = false
-  Run = uSimMarineV22    @ NewConsole = false
   Run = pLogger          @ NewConsole = false
   Run = pNodeReporter    @ NewConsole = false
   Run = pMarinePIDV22    @ NewConsole = false
@@ -25,7 +24,34 @@ ProcessConfig = ANTLER
   Run = uFldNodeBroker   @ NewConsole = false
   Run = pContactMgrV20   @ NewConsole = false
   Run = pRealm           @ NewConsole = false
+
+  // SIM  : uSimMarineV22 fakes the boat dynamics (pMarinePIDV22 above
+  //        turns DESIRED_HEADING/SPEED into rudder+thrust for it).
+  // BBOAT: the real BlueBoat backseat stack. iBackSeatBroker talks to the
+  //        front seat (telemetry in, thrust out), pBB_DGPS_EKF produces the
+  //        filtered NAV_* the helm consumes, pThrustMix turns the PID's
+  //        thrust+rudder into left/right thruster commands, pBB_Health
+  //        watches battery/temp/GPS quality. pDeadManPost stops the boat if
+  //        the shoreside heartbeat dies (see plugs.moos).
+  //        Same app set that rescue_pireas runs on these Pablos.
+#ifdef XMODE SIM
+  Run = uSimMarineV22    @ NewConsole = false
+#elseifdef XMODE BBOAT
+  Run = iBackSeatBroker  @ NewConsole = false
+  Run = pBB_Health       @ NewConsole = false
+  Run = pBB_DGPS_EKF     @ NewConsole = false
+  Run = pThrustMix       @ NewConsole = false
+  Run = pDeadManPost     @ NewConsole = false
+#endif
 }
+
+#ifdef XMODE BBOAT
+#include plugs.moos <iBackSeatBroker>
+#include plugs.moos <pBB_Health>
+#include plugs.moos <pBB_DGPS_EKF>
+#include plugs.moos <pThrustMix>
+#include plugs.moos <pDeadManPost>
+#endif
 
 #include plugs.moos <pShare>
 #include plugs.moos <pHostInfo>
@@ -52,7 +78,10 @@ ProcessConfig = uFldNodeBroker
 
 //------------------------------------------------------
 // uSimMarineV22 config block  (tuned kayak-class boat)
+//   SIM only -- on a real boat NAV_* comes from pBB_DGPS_EKF and
+//   START_POS is meaningless (the GPS says where the boat is).
 
+#ifdef XMODE SIM
 ProcessConfig = uSimMarineV22
 {
   AppTick   = 10
@@ -64,6 +93,7 @@ ProcessConfig = uSimMarineV22
   thrust_map    = 0:0, 20:1, 40:2, 60:3, 80:4, 100:5
   turn_spd_loss = 0.4
 }
+#endif
 
 //----------------------------------------------------
 // pHelmIvP config block

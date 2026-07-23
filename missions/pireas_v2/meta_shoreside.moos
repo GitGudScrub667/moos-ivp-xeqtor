@@ -24,6 +24,26 @@ ProcessConfig = ANTLER
   Run = uFldNodeComms   @ NewConsole = false
   Run = pArrivalSync    @ NewConsole = false
   Run = pRealm          @ NewConsole = false
+  Run = uTimerScript    @ NewConsole = false
+}
+
+//--------------------------------------------------
+// uTimerScript config block
+//   Beats HEARTBEAT_ALL once a second. qbridge below relays it to every
+//   boat as HEARTBEAT, where pDeadManPost (hardware builds only) watches
+//   it: if the link drops for max_noheart seconds the boat un-deploys and
+//   all-stops. Harmless in sim -- nothing subscribes.
+
+ProcessConfig = uTimerScript
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  paused     = false
+  reset_max  = unlimited
+  reset_time = all-posted
+
+  event = var=HEARTBEAT_ALL, val=true, time=1
 }
 
 #include plugs.moos <pShare>
@@ -47,6 +67,7 @@ ProcessConfig = uFldShoreBroker
   qbridge = DISPERSE, DISPERSE_UPDATE
   qbridge = MIO, MIO_UPDATE
   qbridge = SLOTTED
+  qbridge = HEARTBEAT       // -> pDeadManPost on each boat (hardware)
 }
 
 //--------------------------------------------------

@@ -26,6 +26,13 @@ RETURN_POS=""
 ORBIT_SPD="2.0"
 MAX_SPD="4"
 
+# XMODE: SIM (simulated boat) or BBOAT (real BlueBoat backseat stack).
+# Left EMPTY means "this is a real robot" -- identity, type and front-seat
+# IP are then read from the vehicle itself in Part 4 below, the same way
+# rescue_pireas does on these Pablos. --sim forces SIM.
+XMODE=""
+FSEAT_IP=""
+
 # The common ring (same for every boat). Sited in the widened trapezoid
 # op-region. Scaled up x1.15 (was 18.7): corner loiters now ~4.2 m clear of
 # the op-edge, ~10.4 m clear of the buoy zones.
@@ -40,7 +47,10 @@ for ARGI; do
         echo "  --auto, -a          Script launch, no uMAC"
         echo "  --just_make, -j     Only create targ files"
         echo "  --verbose, -v       Verbose"
-        echo "  --sim, -s           Sim vehicle (default here)"
+        echo "  --sim, -s           Simulated vehicle (XMODE=SIM). OMIT this"
+        echo "                      on a real boat: name, color, type and"
+        echo "                      front-seat IP are then auto-detected, and"
+        echo "                      the ring slot is looked up by boat name."
         echo "  --mport=<9001>      Veh MOOSDB port"
         echo "  --pshare=<9201>     Veh pShare listen port"
         echo "  --shore=<localhost> Shoreside IP"
@@ -60,7 +70,10 @@ for ARGI; do
     elif [ "${ARGI}" = "--auto" -o "${ARGI}" = "-a" ]; then
         AUTO_LAUNCHED="yes"
     elif [ "${ARGI}" = "--sim" -o "${ARGI}" = "-s" ]; then
-        : # sim is the only mode here
+        XMODE="SIM"
+    elif [ "${ARGI}" = "--bboat" -o "${ARGI}" = "-b" ]; then
+        XMODE="BBOAT"   # force hardware config (bench-test the targ files
+                        # off-robot; a real boat needs no flag at all)
     elif [ "${ARGI:0:5}" = "--ip=" ]; then
         IP_ADDR="${ARGI#--ip=*}"
     elif [ "${ARGI:0:8}" = "--mport=" ]; then
@@ -69,6 +82,8 @@ for ARGI; do
         PSHARE_PORT="${ARGI#--pshare=*}"
     elif [ "${ARGI:0:8}" = "--shore=" ]; then
         SHORE_IP="${ARGI#--shore=*}"
+    elif [ "${ARGI:0:8}" = "--fseat=" ]; then
+        FSEAT_IP="${ARGI#--fseat=*}"   # override the auto-detected front seat
     elif [ "${ARGI:0:15}" = "--shore_pshare=" ]; then
         SHORE_PSHARE="${ARGI#--shore_pshare=*}"
     elif [ "${ARGI:0:8}" = "--vname=" ]; then
@@ -87,6 +102,43 @@ for ARGI; do
     fi
 done
 
+#------------------------------------------------------------
+#  Part 4: If --sim was NOT given, this is a real robot. Take identity,
+#  type and front-seat IP from the vehicle itself (get_robot_info.sh),
+#  the same mechanism rescue_pireas uses on these Pablos.
+#------------------------------------------------------------
+if [ "${XMODE}" = "" ]; then
+    COLOR=`get_robot_info.sh --color`
+    IP_ADDR=`get_robot_info.sh --ip`
+    FSEAT_IP=`get_robot_info.sh --fseat`
+    VNAME=`get_robot_info.sh --name`
+    XMODE=`get_robot_info.sh --TYPE`
+    if [ "$XMODE" = "" -o "$IP_ADDR" = "localhost" ]; then
+        echo "$ME: Problem getting robot info. Exit Code 2."
+        exit 2
+    fi
+
+    # Look this boat's ring slot and home point up BY NAME, so a real boat
+    # can never be launched carrying another boat's slot. Needs the field
+    # files, so run ./init_field.sh on the vehicle first.
+    if [ ! -f vnames.txt -o ! -f vslotpos.txt -o ! -f vpositions.txt ]; then
+        echo "$ME: field files missing -- run ./init_field.sh. Exit Code 4."
+        exit 4
+    fi
+    LN=$(grep -n "^${VNAME}$" vnames.txt | cut -d: -f1)
+    if [ "$LN" = "" ]; then
+        echo "$ME: '$VNAME' is not listed in vnames.txt. Exit Code 5."
+        exit 5
+    fi
+    SLOT_POS=$(sed -n "${LN}p" vslotpos.txt)
+    # RETURN_POS must be a real point. Falling through to the sim default
+    # below would resolve it to START_POS = 0,0 = the DATUM, which is on
+    # the east shore, outside the op-region.
+    if [ "${RETURN_POS}" = "" ]; then
+        RETURN_POS=$(sed -n "${LN}p" vpositions.txt | sed 's/,heading=[^,]*//')
+    fi
+fi
+
 # Return to the start position by default (x,y only - drop any heading).
 if [ "${RETURN_POS}" = "" ]; then
     RETURN_POS=$(echo "${START_POS}" | sed 's/,heading=[^,]*//')
@@ -99,6 +151,7 @@ if [ "${VERBOSE}" = "yes" ]; then
     echo "START_POS=$START_POS"
     echo "SLOT_POS=$SLOT_POS  ORBIT_SPD=$ORBIT_SPD (transit spd set live by pArrivalSync)"
     echo "RETURN_POS=$RETURN_POS"
+    echo "XMODE=$XMODE  FSEAT_IP=$FSEAT_IP  IP_ADDR=$IP_ADDR"
     echo "RING = ($CIRCLE_X,$CIRCLE_Y) r=$CIRCLE_RAD"
 fi
 
@@ -113,7 +166,8 @@ nsplug meta_vehicle.moos targ_$VNAME.moos $NSFLAGS WARP=$TIME_WARP \
        PSHARE_PORT=$PSHARE_PORT   SHORE_IP=$SHORE_IP       \
        SHORE_PSHARE=$SHORE_PSHARE VNAME=$VNAME             \
        COLOR=$COLOR               START_POS="$START_POS"   \
-       MAX_SPD=$MAX_SPD
+       MAX_SPD=$MAX_SPD           XMODE=$XMODE             \
+       FSEAT_IP=$FSEAT_IP
 
 nsplug meta_vehicle.bhv targ_$VNAME.bhv $NSFLAGS           \
        VNAME=$VNAME               START_POS="$START_POS"   \
