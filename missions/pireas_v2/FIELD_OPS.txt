@@ -1,0 +1,264 @@
+===========================================================================
+ PIREAS_V2 — IN-WATER FIELD OPERATIONS RUNBOOK
+ 4-boat encircle "show" mission, Pireas marina.  Real BlueBoats + shoreside.
+ Mission: ~/moos-ivp-xeqtor/missions/pireas_v2   (git main @ 6e45163)
+ Prepared 2026-07-23.
+===========================================================================
+
+  RULE #1:  REAL BOATS ALWAYS RUN AT WARP 1.  Never time-warp real boats.
+  RULE #2:  The 8 m centre no-go (parked show-vessel) and the loiter radii
+            are SOFT IvP preferences, NOT hard limits. Keep an INDEPENDENT
+            way to stop the boats at all times (see ABORTS + SAFETY).
+
+  Roles:
+    * SHORESIDE  = your laptop. Runs MOOSDB + pMarineViewer + pArrivalSync
+                   (the coordinator that drives the formation continuously)
+                   + the shoreside heartbeat.
+    * EACH PABLO = one BlueBoat's onboard computer (boats: abe, ben, cal, deb).
+                   Runs its own vehicle community + BlueBoat backseat stack.
+
+
+===========================================================================
+ 0.  ASSUMPTIONS  (read once; verify the first time on a new boat)
+===========================================================================
+ - These 4 Pablos have ALREADY FLOWN rescue_pireas at this site, so each one
+   already has: the BlueBoat backseat apps (iBackSeatBroker, pBB_Health,
+   pBB_DGPS_EKF, pThrustMix), a working front seat, and the per-boat
+   'get_robot_info.sh' on its PATH (this is what tells each boat its own
+   name/colour/type/front-seat IP).  pireas_v2 reuses that identical stack.
+ - Each Pablo has the moos-ivp + moos-ivp-xeqtor repos cloned in $HOME
+   (same sibling layout as the laptop).  If a boat is a FRESH machine, set it
+   up exactly like the laptop first — see APPENDIX A.
+ - Same datum on shore and boats: 37.9332599 / 23.6282166.
+ - Laptop and all Pablos are on the SAME field radio network and can ping
+   each other by IP.
+
+
+===========================================================================
+ 1.  PRE-DEPARTURE — ON THE LAPTOP (do this on the bench, before the dock)
+===========================================================================
+ 1a. Load the MOOS env (only needed in a terminal opened before setup; new
+     terminals get it automatically):
+        source ~/.bashrc
+
+ 1b. Confirm the toolchain resolves (all must print paths, none "not found"):
+        which nsplug uMAC pMarineViewer pHelmIvP pArrivalSync
+
+ 1c. Get the LATEST mission and rebuild our repo:
+        cd ~/moos-ivp-xeqtor
+        git pull
+        ./build.sh
+     (Nothing to pull = already current. 'origin/main' should be 6e45163
+      or newer.)
+
+ 1d. Find the laptop's field IP — you will pass this to every boat.
+        hostname -I
+     Pick the address on the field-radio subnet (the one the boats can reach).
+     Call it  <LAPTOP_IP>  everywhere below.
+
+ 1e. Bench-inspect the hardware targ files WITHOUT a boat (optional but wise):
+        cd ~/moos-ivp-xeqtor/missions/pireas_v2
+        ./clean.sh
+        ./init_field.sh
+        ./launch_vehicle.sh --bboat -j --vname=abe --shore=<LAPTOP_IP>
+     '-b/--bboat' forces the hardware config off-robot so you can read
+     targ_abe.moos. NOTE: with --bboat the front-seat/listen IPs come out
+     blank/localhost — that is EXPECTED off a real boat, not a bug.
+     Then clean up again:  ./clean.sh
+
+
+===========================================================================
+ 2.  ON EACH PABLO  (abe, ben, cal, deb) — get current + build once
+===========================================================================
+ Do this on every boat before the first launch of the day (SSH into each
+ Pablo, or on its own keyboard):
+
+   2a. source ~/.bashrc                 # ensure MOOS env is loaded
+   2b. cd ~/moos-ivp-xeqtor && git pull # pull pireas_v2 @ 6e45163+
+   2c. ./build.sh                       # refresh binaries/behaviors
+   2d. cd ~/moos-ivp-xeqtor/missions/pireas_v2
+   2e. ./init_field.sh                  # REQUIRED: writes vnames/vslotpos/
+                                        # vpositions the launcher looks the
+                                        # boat's slot + home point up in.
+                                        # (These are generated, NOT in git —
+                                        #  a fresh clone will not have them.)
+   2f. get_robot_info.sh --name         # sanity: prints THIS boat's name
+       get_robot_info.sh --ip           # must NOT be "localhost"
+       get_robot_info.sh --fseat        # front-seat IP
+       get_robot_info.sh --TYPE         # boat type/xmode
+     If --name is wrong or --ip is "localhost", the boat will refuse to launch
+     (Exit Code 2) — fix the boat's own get_robot_info config before going on.
+
+
+===========================================================================
+ 3.  ON THE WATER — LAUNCH ORDER
+===========================================================================
+ Bring radios up, power the boats, confirm you can ping every Pablo from the
+ laptop.  Then:
+
+ --- STEP 3.1  START THE SHORESIDE (laptop) -------------------------------
+        cd ~/moos-ivp-xeqtor/missions/pireas_v2
+        ./launch.sh --shoreside --ip=<LAPTOP_IP> 1
+     * The trailing "1" is WARP = 1.  Do not change it.
+     * This launches ONLY the shoreside (DB + viewer + pArrivalSync +
+       heartbeat). It does NOT start any simulated boats.
+     * pMarineViewer opens. It will be empty until boats check in.
+
+ --- STEP 3.2  START EACH BOAT (on its own Pablo) -------------------------
+     On abe's Pablo:
+        cd ~/moos-ivp-xeqtor/missions/pireas_v2
+        ./launch_vehicle.sh --shore=<LAPTOP_IP> 1
+     Repeat the SAME command on ben, cal, deb.
+     * No per-boat flags. Omitting --sim means "real robot": the boat
+       auto-detects its name/colour/type/front-seat IP and looks up its
+       ring slot + home point BY NAME.
+     * The trailing "1" is WARP = 1.
+     * If you did not already run ./init_field.sh (step 2e) in this dir on
+       this boot, do it first — the launcher needs vnames/vslotpos/vpositions.
+
+
+===========================================================================
+ 4.  PRE-DEPLOY CHECKLIST (on the shoreside viewer) — DO NOT SKIP
+===========================================================================
+ Before pressing DEPLOY, confirm on pMarineViewer:
+   [ ] All FOUR nodes present: abe, ben, cal, deb.
+   [ ] Each boat's PLOTTED position matches where it physically floats.
+       (Wrong/So-offset position = bad GPS/datum — stop, do not deploy.)
+   [ ] uProcessWatch reports all-present (no missing apps) for each boat.
+   [ ] Each helm is in DRIVE (not PARK / not MALCONFIG).
+   [ ] Boats are physically near the HOME cluster (~ -68,-41 local), i.e.
+       east of the ring, bows pointed roughly west toward the ring.
+         home points:  abe(-63,-37)  ben(-73,-37)  cal(-73,-45)  deb(-63,-45)
+
+ THE HEARTBEAT / DEAD-MAN:  the shoreside beats HEARTBEAT once a second; each
+ boat runs pDeadManPost. If the shore link drops for 15 s a boat AUTO-UNDEPLOYS
+ and stops. This is deliberate — the formation is driven continuously from
+ shore. A boat that briefly loses the link will drop out and need re-deploy.
+
+
+===========================================================================
+ 5.  RUNNING THE SHOW (shoreside viewer buttons)
+===========================================================================
+   DEPLOY            -> all 4 transit to their N/E/S/W slots (arriving
+                        together, pArrivalSync paces them) then orbit the
+                        common ring (R=21.5), evenly spaced at 90 deg.
+                        >> Watch the ring FORM cleanly before anything else. <<
+   DISPERSE          -> boats spread outward to a square, exiting FORWARD
+                        (tangentially), not U-turning inward.
+   ASSEMBLE          -> boats re-enter the ring forward and resume orbit.
+   MIO               -> the closest boat peels off to guard the fixed r=7
+                        loiter station at local (-90.43,-52.25) (4 m no-go at
+                        its centre); the other 3 re-space to 120 deg.
+   END-MIO           -> that boat returns to the ring; all 4 restore 90 deg.
+   RETURN            -> all boats head back to their home points.
+   ALL-STOP          -> all boats stop.
+
+   Sequence discipline: DEPLOY and let the ring settle BEFORE using
+   DISPERSE or MIO. One command at a time; let it complete.
+
+
+===========================================================================
+ 6.  ABORTS  (in escalating order — know these COLD before you launch)
+===========================================================================
+   1) ALL-STOP        (viewer button — first resort)
+   2) RETURN          (send them home)
+   3) MANUAL OVERRIDE (take the boat under direct/manual control)
+   4) PHYSICAL KILL   (hardware kill switch on the boat)
+
+   The soft no-go around the parked vessel is NOT a guarantee — if a boat
+   tracks toward the parked vessel, do not wait on the avoidance behaviour;
+   ALL-STOP / RETURN / kill.
+
+
+===========================================================================
+ 7.  SHUTDOWN + LOGS
+===========================================================================
+ - To end the mission on the laptop: in the shoreside terminal, quit the
+   uMAC console / Ctrl-C the launch — "Halting all apps" tears everything down.
+ - On each Pablo, Ctrl-C the launch_vehicle.sh (or its uMAC) to stop that boat.
+ - Logs: each boat writes LOG_<NAME>_* alog dirs in the mission dir; the
+   shoreside writes XLOG_SHORESIDE_*. If you want them reviewed afterward,
+   DO NOT run ./clean.sh (it deletes LOG_*/XLOG_*/targ_*/v*.txt). Copy the
+   LOG_* dirs off the boats to the laptop for analysis.
+
+
+===========================================================================
+ 8.  TROUBLESHOOTING
+===========================================================================
+ "nsplug: command not found" / "uMAC: command not found"
+     -> The MOOS env is not loaded in that terminal. Run:  source ~/.bashrc
+        (or open a fresh terminal), then relaunch. Verify with:
+           which nsplug uMAC pMarineViewer
+
+ "Problem getting robot info. Exit Code 2"  (on a boat)
+     -> get_robot_info.sh returned a bad name or --ip=localhost. The boat's
+        own identity config is wrong / front seat not up. Fix on the boat;
+        check:  get_robot_info.sh --name / --ip / --fseat / --TYPE
+
+ "field files missing -- run ./init_field.sh. Exit Code 4"  (on a boat)
+     -> Run ./init_field.sh in the mission dir first (step 2e), then relaunch.
+
+ "'<name>' is not listed in vnames.txt. Exit Code 5"  (on a boat)
+     -> The boat's detected name isn't one of abe/ben/cal/deb. Fix the boat's
+        get_robot_info name, or add the boat to the field (init_field.sh).
+
+ A boat un-deploys / stops on its own
+     -> Likely the 15 s dead-man: it lost the shore heartbeat (radio/link).
+        Restore the link; re-DEPLOY that boat. Check pDeadManPost on the boat
+        and HEARTBEAT flowing from shore.
+
+ Boat plotted far from where it floats
+     -> GPS/datum problem. DO NOT DEPLOY. Confirm the boat's DGPS/EKF and that
+        it shares the datum 37.9332599 / 23.6282166.
+
+ A node never appears on the viewer
+     -> Wrong --shore=<LAPTOP_IP>, radios not bridged, or the boat can't reach
+        the laptop. Ping the laptop FROM the boat; recheck <LAPTOP_IP>
+        (hostname -I on the laptop, field-subnet address).
+
+
+===========================================================================
+ APPENDIX A — FRESH PABLO / laptop from scratch (only if a machine is bare)
+===========================================================================
+ Native Linux. Run the dependency install (needs the machine's sudo password):
+   sudo apt update && sudo apt install -y build-essential g++ subversion xterm \
+     cmake git libfltk1.3-dev freeglut3-dev libpng-dev libjpeg-dev libxft-dev \
+     libxinerama-dev libtiff-dev espeak python3 python3-pil
+
+ Clone the repos as siblings in $HOME:
+   cd ~
+   git clone https://github.com/moos-ivp/moos-ivp.git
+   git clone https://github.com/GitGudScrub667/moos-ivp-xeqtor.git
+
+ Add to the end of ~/.bashrc (PATH: xeqtor BEFORE 2680 if 2680 is present):
+   # >>> moos-ivp setup >>>
+   export PATH=$PATH:$HOME/moos-ivp/bin:$HOME/moos-ivp-xeqtor/bin:$HOME/moos-ivp/scripts
+   export IVP_BEHAVIOR_DIRS=$HOME/moos-ivp/lib:$HOME/moos-ivp-xeqtor/lib
+   # <<< moos-ivp setup <<<
+ Then:  source ~/.bashrc
+
+ Build (core first — xeqtor links it via ../moos-ivp):
+   cd ~/moos-ivp        && ./build.sh
+   cd ~/moos-ivp-xeqtor && ./build.sh
+
+ A real boat additionally needs its BlueBoat backseat stack + get_robot_info.sh
+ (already present on these 4 Pablos from rescue_pireas). Standing up that
+ hardware layer on a brand-new boat is beyond this mission's files.
+
+
+===========================================================================
+ QUICK CARD  (rip-and-run)
+===========================================================================
+   LAPTOP:   hostname -I                       # note <LAPTOP_IP>
+             cd ~/moos-ivp-xeqtor/missions/pireas_v2
+             ./launch.sh --shoreside --ip=<LAPTOP_IP> 1
+
+   EACH BOAT (abe/ben/cal/deb, on its own Pablo):
+             cd ~/moos-ivp-xeqtor/missions/pireas_v2
+             ./init_field.sh                   # first launch of the boot
+             ./launch_vehicle.sh --shore=<LAPTOP_IP> 1
+
+   VIEWER:   check 4 nodes + positions + DRIVE  ->  DEPLOY  ->  ring forms
+             ->  DISPERSE/ASSEMBLE, MIO/END-MIO.   Stop: ALL-STOP > RETURN
+             > manual > kill.   WARP 1 ALWAYS.
+===========================================================================
