@@ -1,0 +1,75 @@
+//--------  FILE: skara.bhv  (Skaramangas cove viewer)  --------
+
+initialize DEPLOY = false
+initialize RETURN = false
+
+//----------------------------------------------
+// Operating region: 3-ring soft/halt boundary (BHV_OpRegionV24).
+//   core_poly   = inner "soft" boundary (drawn on the chart in local meters).
+//   save_dist   = deadband ring, grown OUTWARD from core_poly.
+//   halt_dist   = outer ring, grown OUTWARD; crossing it posts an all-stop.
+// Cross the core edge -> recover (steer back) at recover_spd.
+Behavior = BHV_OpRegionV24
+{
+  name        = opregion
+  pwt         = 300
+  condition   = DEPLOY = true
+
+  core_poly   = pts={-32,-87: 14,-15: 106,-56: 103,-164: 18,-178}
+
+  save_dist   = 3
+  halt_dist   = 15
+  recover_spd = 0.6
+
+  visual_hints = edge_size = 1
+  visual_hints = save_edge_color = gray30
+  visual_hints = halt_edge_color = gray40
+}
+
+//----------------------------------------------
+// Patrol a small loop in the open cove water.
+Behavior = BHV_Waypoint
+{
+  name       = waypt_survey
+  pwt        = 100
+  condition  = RETURN = false
+  condition  = DEPLOY = true
+  endflag    = RETURN = true
+  updates    = WPT_UPDATE
+  perpetual  = true
+
+  speed          = 2.5
+  capture_line   = true
+  capture_radius = 5.0
+  slip_radius    = 15.0
+  lead           = 8
+
+  // All points in open water (local meters from the lighthouse datum)
+  polygon = 15,-75 : 75,-75 : 75,-135 : 15,-135
+  order   = normal
+  repeat  = 999
+
+  visual_hints = nextpt_color=yellow, nextpt_vertex_size=8
+  visual_hints = vertex_color=dodger_blue, edge_color=white
+  visual_hints = vertex_size=5, edge_size=1
+}
+
+//----------------------------------------------
+// Return to home (start point = south tip) when RETURN is set.
+Behavior = BHV_Waypoint
+{
+  name       = waypt_return
+  pwt        = 100
+  condition  = RETURN = true
+  condition  = DEPLOY = true
+  perpetual  = true
+  updates    = RETURN_UPDATE
+  endflag    = RETURN  = false
+  endflag    = DEPLOY  = false
+  endflag    = MISSION = complete
+
+  speed          = 2.0
+  capture_radius = 2.0
+  slip_radius    = 8.0
+  points         = 18,-173
+}

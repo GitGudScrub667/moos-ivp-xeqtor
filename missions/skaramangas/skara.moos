@@ -1,0 +1,161 @@
+//-------------------------------------------------
+// FILE: skara.moos   (Skaramangas cove viewer mission)
+//-------------------------------------------------
+
+ServerHost   = localhost
+ServerPort   = 9000
+Community    = skara
+MOOSTimeWarp = 1
+
+// Skaramangas cove, Gulf of Elefsina.
+// Datum = lighthouse at the pier tip (local 0,0).
+LatOrigin  = 37.998009
+LongOrigin = 23.581591
+
+//------------------------------------------
+// Antler configuration block
+ProcessConfig = ANTLER
+{
+  MSBetweenLaunches = 200
+
+  Run = MOOSDB        @ NewConsole = false
+  Run = pLogger       @ NewConsole = false
+  Run = uSimMarineV22 @ NewConsole = false
+  Run = pMarinePIDV22 @ NewConsole = false
+  Run = pHelmIvP      @ NewConsole = false
+  Run = pMarineViewer @ NewConsole = false
+  Run = uProcessWatch @ NewConsole = false
+  Run = pNodeReporter @ NewConsole = false
+  Run = pRealm        @ NewConsole = false
+}
+
+//------------------------------------------
+ProcessConfig = pLogger
+{
+  AppTick   = 8
+  CommsTick = 8
+  AsyncLog  = true
+
+  Log = IVPHELM_LIFE_EVENT @ 0 NOSYNC
+  Log = REPORT @ 0 NOSYNC
+  Log = BHV_SETTINGS @ 0 NOSYNC
+  Log = SUMMARY @ 0 NOSYNC
+
+  LogAuxSrc = true
+  WildCardLogging = true
+  WildCardOmitPattern = *_STATUS
+  WildCardOmitPattern = DB_VARSUMMARY
+  WildCardOmitPattern = DB_RWSUMMARY
+  WildCardExclusionLog = true
+}
+
+//------------------------------------------
+ProcessConfig = uProcessWatch
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  watch_all = true
+  nowatch   = uPokeDB*
+  nowatch   = uQueryDB*
+  nowatch   = uXMS*
+  nowatch   = uMAC*
+}
+
+//------------------------------------------
+ProcessConfig = uSimMarineV22
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  start_pos     = x=18, y=-173, heading=0, speed=0
+  prefix        = NAV
+  turn_rate     = 95
+  thrust_map    = 0:0, 20:1, 40:2, 60:3, 80:4, 100:5
+  turn_spd_loss = 0.4
+}
+
+//------------------------------------------
+ProcessConfig = pHelmIvP
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  behaviors = skara.bhv
+  domain    = course:0:359:360
+  domain    = speed:0:4:41
+}
+
+//------------------------------------------
+ProcessConfig = pMarinePIDV22
+{
+  AppTick   = 20
+  CommsTick = 20
+
+  verbose       = true
+  depth_control = false
+
+  yaw_pid_kp = 0.9
+  yaw_pid_kd = 0.3
+  yaw_pid_ki = 0.3
+  yaw_pid_integral_limit = 0.07
+
+  speed_pid_kp = 1.0
+  speed_pid_kd = 0.0
+  speed_pid_ki = 0.0
+  speed_pid_integral_limit = 0.07
+
+  maxrudder    = 100
+  maxthrust    = 100
+  speed_factor = 20
+}
+
+//------------------------------------------
+ProcessConfig = pMarineViewer
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  tiff_file            = skaramangas.tif
+
+  set_pan_x            = 0
+  set_pan_y            = 0
+  zoom                 = 0.85
+  vehicle_shape_scale  = 1.5
+  hash_delta           = 50
+  hash_shade           = 0.22
+  hash_viewable        = true
+
+  trails_point_size    = 1
+
+  appcast_viewable     = true
+  appcast_color_scheme = indigo
+  nodes_font_size      = large
+  procs_font_size      = large
+  appcast_font_size    = medium
+
+  right_context[return] = DEPLOY=true
+  right_context[return] = MOOS_MANUAL_OVERRIDE=false
+  right_context[return] = RETURN=false
+
+  scope = SUMMARY
+  scope = RETURN
+  scope = WPT_STAT
+
+  button_one   = DEPLOY # DEPLOY=true
+  button_one   = MOOS_MANUAL_OVERRIDE=false # RETURN=false
+  button_two   = RETURN # RETURN=true
+  button_three = SLOWER # WPT_UPDATE=speed=1.5
+  button_four  = FASTER # WPT_UPDATE=speed=3.5
+}
+
+//------------------------------------------
+ProcessConfig = pNodeReporter
+{
+  AppTick   = 2
+  CommsTick = 2
+
+  platform_type   = kayak
+  platform_color  = yellow
+  platform_length = 4
+}
