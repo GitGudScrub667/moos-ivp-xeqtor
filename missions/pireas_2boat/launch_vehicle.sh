@@ -104,15 +104,15 @@ done
 
 #------------------------------------------------------------
 #  Part 4: If --sim was NOT given, this is a real robot. Take identity,
-#  type and front-seat IP from the vehicle itself (get_robot_info.sh),
+#  type and front-seat IP from the vehicle itself (get_robot_info_greece.sh),
 #  the same mechanism rescue_pireas uses on these Pablos.
 #------------------------------------------------------------
 if [ "${XMODE}" = "" ]; then
-    COLOR=`get_robot_info.sh --color`
-    IP_ADDR=`get_robot_info.sh --ip`
-    FSEAT_IP=`get_robot_info.sh --fseat`
-    VNAME=`get_robot_info.sh --name`
-    XMODE=`get_robot_info.sh --TYPE`
+    COLOR=`get_robot_info_greece.sh --color`
+    IP_ADDR=`get_robot_info_greece.sh --ip`
+    FSEAT_IP=`get_robot_info_greece.sh --fseat`
+    VNAME=`get_robot_info_greece.sh --name`
+    XMODE=`get_robot_info_greece.sh --TYPE`
     if [ "$XMODE" = "" -o "$IP_ADDR" = "localhost" ]; then
         echo "$ME: Problem getting robot info. Exit Code 2."
         exit 2

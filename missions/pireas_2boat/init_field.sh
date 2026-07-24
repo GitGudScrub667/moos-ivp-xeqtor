@@ -28,6 +28,6 @@ echo "-165.5,-43"   >> vslotpos.txt   # bama -> W  (phase 180 deg)
 # both arrive at their slots simultaneously.
 
 printf "asha\nbama\n"                 >  vnames.txt
-printf "coral\ndodger_blue\n"         >  vcolors.txt   # sim tint only; real boats use get_robot_info.sh --color
+printf "green\norange\n"         >  vcolors.txt   # sim tint only; real boats use get_robot_info_greece.sh --color
 
 exit 0

@@ -32,10 +32,10 @@
    cd ~/moos-ivp-xeqtor/missions/pireas_2boat
    ./init_field.sh                 # REQUIRED: writes vnames/vslotpos/vpositions
                                    # (generated, NOT in git; a fresh clone lacks them)
-   get_robot_info.sh --name        # MUST print exactly "asha" or "bama"
+   get_robot_info_greece.sh --name        # MUST print exactly "asha" or "bama"
                                    #   (launcher matches ^asha$/^bama$; a different
                                    #    string -> Exit Code 5. Fix boat identity if so.)
-   get_robot_info.sh --ip          # must NOT be "localhost"
+   get_robot_info_greece.sh --ip          # must NOT be "localhost"
 
 
 ===========================================================================
@@ -101,7 +101,7 @@
 ===========================================================================
  "nsplug / uMAC: command not found"    -> source ~/.bashrc in that terminal.
  "'<name>' is not listed in vnames.txt. Exit Code 5"
-       -> get_robot_info.sh --name isn't asha/bama. Fix the boat's identity,
+       -> get_robot_info_greece.sh --name isn't asha/bama. Fix the boat's identity,
           or the boat isn't one of the two in this mission.
  "field files missing. Exit Code 4"    -> run ./init_field.sh in the mission dir.
  A boat un-deploys on its own          -> lost the 15 s shore heartbeat; restore
