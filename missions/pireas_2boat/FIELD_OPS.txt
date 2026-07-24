@@ -1,0 +1,129 @@
+===========================================================================
+ PIREAS_2BOAT — IN-WATER FIELD OPERATIONS RUNBOOK
+ 2-boat encircle, Pireas marina.  asha (E) + bama (W), 180 deg apart.
+ Mission: ~/moos-ivp-xeqtor/missions/pireas_2boat   (git main)
+ Config-only fork of pireas_v2; same ring/chart/datum, 2 boats instead of 4.
+===========================================================================
+
+  RULE #1:  REAL BOATS ALWAYS RUN AT WARP 1.  Never time-warp real boats.
+  RULE #2:  The 8 m centre no-go (parked show-vessel) and the loiter radii are
+            SOFT IvP preferences, NOT hard limits. Keep an INDEPENDENT abort.
+
+  Roles:
+    * SHORESIDE  = laptop. MOOSDB + pMarineViewer + pArrivalSync + heartbeat.
+    * EACH PABLO = one BlueBoat backseat computer.  Boats: asha, bama.
+  Ring: center (-144,-43), R=21.5.  Slots: asha->E (-122.5,-43), bama->W (-165.5,-43).
+
+
+===========================================================================
+ 1.  ON THE LAPTOP (bench, before the dock)
+===========================================================================
+ source ~/.bashrc                              # load MOOS env if not already
+ which nsplug uMAC pMarineViewer pArrivalSync  # all must print paths
+ cd ~/moos-ivp-xeqtor && git pull && ./build.sh
+ hostname -I                                   # note the field-subnet IP = <LAPTOP_IP>
+
+
+===========================================================================
+ 2.  ON EACH PABLO  (asha, bama) — first launch of the day
+===========================================================================
+   source ~/.bashrc
+   cd ~/moos-ivp-xeqtor && git pull && ./build.sh
+   cd ~/moos-ivp-xeqtor/missions/pireas_2boat
+   ./init_field.sh                 # REQUIRED: writes vnames/vslotpos/vpositions
+                                   # (generated, NOT in git; a fresh clone lacks them)
+   get_robot_info.sh --name        # MUST print exactly "asha" or "bama"
+                                   #   (launcher matches ^asha$/^bama$; a different
+                                   #    string -> Exit Code 5. Fix boat identity if so.)
+   get_robot_info.sh --ip          # must NOT be "localhost"
+
+
+===========================================================================
+ 3.  LAUNCH ORDER
+===========================================================================
+ Radios up; confirm BOTH boats read reachable on the fleet dashboard
+ (http://10.1.0.10) before launching.
+
+ --- SHORESIDE (laptop) ---
+   cd ~/moos-ivp-xeqtor/missions/pireas_2boat
+   ./launch.sh --shoreside --ip=<LAPTOP_IP> 1        # trailing 1 = WARP 1
+
+ --- EACH BOAT (on its own Pablo) ---
+   cd ~/moos-ivp-xeqtor/missions/pireas_2boat
+   ./launch_vehicle.sh --shore=<LAPTOP_IP> 1         # no per-boat flags; self-identifies
+   (run the same on asha and bama; ./init_field.sh first if not done this boot)
+
+
+===========================================================================
+ 4.  PRE-DEPLOY CHECKLIST (shoreside viewer)
+===========================================================================
+   [ ] BOTH nodes present: asha, bama.
+   [ ] Each boat's plotted position matches where it physically floats.
+   [ ] uProcessWatch all-present per boat; helm in DRIVE.
+   [ ] Boats near the home cluster (~ -68,-41), bows pointed W toward the ring.
+         home:  asha(-63,-37)   bama(-73,-45)
+   Dead-man: shore beats HEARTBEAT 1/s; a boat un-deploys if the link drops 15 s.
+
+
+===========================================================================
+ 5.  RUNNING IT (viewer buttons)
+===========================================================================
+   DEPLOY     -> both transit to their E/W slots (bama, farther, released first),
+                 then orbit the ring 180 deg apart.  >> Watch the ring form first. <<
+   DISPERSE   -> the two spread outward to 2 of the square's corners (non-crossing).
+   ASSEMBLE   -> both re-enter the ring forward and resume orbit.
+   MIO        -> the closest boat leaves to guard the r=7 station at (-90.43,-52.25);
+                 the OTHER boat keeps orbiting the ring alone.
+   END-MIO    -> that boat returns; the two re-form 180 deg apart.
+   RETURN     -> both head home.        ALL-STOP -> both stop.
+
+   Let the ring settle after DEPLOY before DISPERSE or MIO. One command at a time.
+
+
+===========================================================================
+ 6.  ABORTS (escalate in order)
+===========================================================================
+   1) ALL-STOP   2) RETURN   3) MANUAL OVERRIDE   4) PHYSICAL KILL SWITCH
+   Do not trust the soft no-go around the parked vessel -- keep your own stop.
+
+
+===========================================================================
+ 7.  SHUTDOWN + LOGS
+===========================================================================
+ - End on the laptop: quit the uMAC console / Ctrl-C the launch (halts all apps).
+ - Each Pablo: Ctrl-C its launch_vehicle.sh.
+ - Logs: LOG_<NAME>_* per boat, XLOG_SHORESIDE_* on shore. To review them,
+   DO NOT ./clean.sh (it deletes LOG_*/XLOG_*/targ_*/v*.txt); copy the LOG_* off.
+
+
+===========================================================================
+ 8.  TROUBLESHOOTING
+===========================================================================
+ "nsplug / uMAC: command not found"    -> source ~/.bashrc in that terminal.
+ "'<name>' is not listed in vnames.txt. Exit Code 5"
+       -> get_robot_info.sh --name isn't asha/bama. Fix the boat's identity,
+          or the boat isn't one of the two in this mission.
+ "field files missing. Exit Code 4"    -> run ./init_field.sh in the mission dir.
+ A boat un-deploys on its own          -> lost the 15 s shore heartbeat; restore
+                                          the link, re-DEPLOY that boat.
+ A node never appears on the viewer     -> wrong --shore=<LAPTOP_IP>, or the boat
+                                          can't reach the laptop; ping the laptop
+                                          from the boat; recheck hostname -I.
+
+
+===========================================================================
+ QUICK CARD
+===========================================================================
+   LAPTOP:  hostname -I                                  # -> <LAPTOP_IP>
+            cd ~/moos-ivp-xeqtor/missions/pireas_2boat
+            ./launch.sh --shoreside --ip=<LAPTOP_IP> 1
+
+   BOAT (asha / bama, each on its Pablo):
+            cd ~/moos-ivp-xeqtor/missions/pireas_2boat
+            ./init_field.sh                              # first launch of the boot
+            ./launch_vehicle.sh --shore=<LAPTOP_IP> 1
+
+   VIEWER:  2 nodes + positions + DRIVE  ->  DEPLOY  ->  180 deg ring
+            ->  DISPERSE/ASSEMBLE, MIO/END-MIO.  Stop: ALL-STOP > RETURN >
+            manual > kill.  WARP 1 ALWAYS.
+===========================================================================
