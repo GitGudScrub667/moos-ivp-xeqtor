@@ -117,7 +117,7 @@ Behavior = BHV_Loiter
   updates    = DISPERSE_UPDATE
   perpetual  = true
 
-  speed        = 2.0
+  speed        = 1.4
   clockwise    = false
   radius       = 4.0
   nm_radius    = 8.0
@@ -147,7 +147,7 @@ Behavior = BHV_Loiter
   updates    = MIO_UPDATE
   perpetual  = true
 
-  speed        = 2.0
+  speed        = 1.4
   clockwise    = false
   radius       = 7.0
   nm_radius    = 12.0

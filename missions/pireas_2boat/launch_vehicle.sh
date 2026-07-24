@@ -23,8 +23,8 @@ COLOR="coral"
 START_POS="x=0,y=0,heading=0"
 SLOT_POS="0,0"
 RETURN_POS=""
-ORBIT_SPD="2.0"
-MAX_SPD="4"
+ORBIT_SPD="1.4"
+MAX_SPD="2.8"
 
 # XMODE: SIM (simulated boat) or BBOAT (real BlueBoat backseat stack).
 # Left EMPTY means "this is a real robot" -- identity, type and front-seat
