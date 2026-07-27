@@ -76,6 +76,12 @@ ArrivalSync::ArrivalSync()
   m_mio_flag_var   = "MIO";
   m_mio_update_var = "MIO_UPDATE";
 
+  // Dynamic roster (opt-in)
+  m_enable_dynamic_roster = false;
+  m_max_boats             = 4;
+  m_slot_base_deg         = 0.0;   // slot 0 sits due East of the ring center
+  m_roster_timeout        = 5.0;   // "present" = node report within 5 s of deploy
+
   // State
   m_target_count = 0;
   m_rejoin_px   = 1e18;   // sentinel: forces the first rejoin-point post
@@ -123,6 +129,11 @@ bool ArrivalSync::OnNewMail(MOOSMSG_LIST &NewMail)
       // the phase offsets reset to the canonical cardinals (a prior mission's
       // rejoin may have re-anchored them).
       if(m_deployed && !was) {
+        // Dynamic roster: snapshot the connected pool boats and rebuild the
+        // roster + even ring slots for exactly that set BEFORE the per-boat
+        // push below (which now iterates the freshly-locked m_vehicles).
+        if(m_enable_dynamic_roster)
+          lockRoster();
         for(unsigned int i=0; i<m_vehicles.size(); i++) {
           string v = m_vehicles[i];
           m_arrived[v] = false;
@@ -1168,6 +1179,7 @@ void ArrivalSync::handleNodeReport(const string& report)
   m_nav_x[name]    = x;
   m_nav_y[name]    = y;
   m_have_nav[name] = true;
+  m_last_report[name] = m_curr_time;   // presence timestamp (dynamic roster)
 }
 
 //---------------------------------------------------------
@@ -1194,6 +1206,76 @@ bool ArrivalSync::addVehicle(const string& value)
   m_arrived[name]  = false;
   m_have_nav[name] = false;
   return(true);
+}
+
+//---------------------------------------------------------
+// Procedure: lockRoster()
+//   Dynamic roster: called on a fresh DEPLOY. Snapshot which pool boats are
+//   connected right now (a node report within m_roster_timeout), cap at
+//   m_max_boats, lay N evenly-spaced slots on the ring (slot 0 at
+//   m_slot_base_deg, the rest at +i*360/N), and assign the boats to those
+//   slots without any two crossing (cyclicAssign). The result replaces
+//   m_vehicles / m_slot0, so every downstream pass (run-in, phase-lock,
+//   disperse, mio) operates on exactly the boats that showed up.
+
+void ArrivalSync::lockRoster()
+{
+  // 1. Present pool boats: heard from within the timeout window. Pool order is
+  //    preserved so the cap is deterministic if somehow >max_boats show up.
+  vector<string> present;
+  for(unsigned int i=0; i<m_roster_pool.size(); i++) {
+    string v = m_roster_pool[i];
+    if(m_have_nav.count(v) && m_have_nav[v] &&
+       m_last_report.count(v) &&
+       ((m_curr_time - m_last_report[v]) <= m_roster_timeout))
+      present.push_back(v);
+  }
+  if(present.size() > m_max_boats) {
+    reportRunWarning("Dynamic roster: " + uintToString(present.size()) +
+                     " boats present; capping at " + uintToString(m_max_boats));
+    present.resize(m_max_boats);
+  }
+  if(present.empty()) {
+    reportRunWarning("Dynamic roster: DEPLOY with no boats connected -- nothing to slot");
+    m_vehicles.clear();
+    m_slot0_x.clear();
+    m_slot0_y.clear();
+    return;
+  }
+
+  // 2. N evenly-spaced slot points on the ring.
+  unsigned int N = present.size();
+  vector<double> tx, ty;
+  for(unsigned int k=0; k<N; k++) {
+    double ang = m_slot_base_deg + (360.0 * k) / (double)N;
+    double rad = ang * M_PI / 180.0;
+    tx.push_back(m_circle_x + m_circle_rad * cos(rad));
+    ty.push_back(m_circle_y + m_circle_rad * sin(rad));
+  }
+
+  // 3. Assign the present boats to those slots without crossing. cyclicAssign
+  //    reads the current m_vehicles, so seed it with the present set first.
+  m_vehicles = present;
+  vector<string>       boats;
+  vector<unsigned int> idx;
+  cyclicAssign(tx, ty, boats, idx);
+  if(boats.empty()) {   // no nav (shouldn't happen: "present" already implies nav)
+    reportRunWarning("Dynamic roster: no boat positions -- cannot assign slots");
+    return;
+  }
+
+  // 4. Commit: m_vehicles in assigned order, m_slot0/m_slot kept parallel to it.
+  m_vehicles = boats;
+  m_slot0_x.clear();
+  m_slot0_y.clear();
+  for(unsigned int i=0; i<boats.size(); i++) {
+    string v = boats[i];
+    unsigned int s = idx[i];
+    m_slot0_x.push_back(tx[s]);
+    m_slot0_y.push_back(ty[s]);
+    m_slot_x[v] = tx[s];
+    m_slot_y[v] = ty[s];
+  }
 }
 
 //---------------------------------------------------------
@@ -1314,6 +1396,27 @@ bool ArrivalSync::OnStartUp()
     else if(param == "mio_cmd_var") {
       m_mio_cmd_var = value; handled = true;
     }
+    else if(param == "enable_dynamic_roster")
+      handled = setBooleanOnString(m_enable_dynamic_roster, value);
+    else if(param == "roster_pool") {
+      // "asha,bama,chip,flex,ewan" -> the candidate boat names.
+      m_roster_pool.clear();
+      vector<string> names = parseString(value, ',');
+      for(unsigned int k=0; k<names.size(); k++) {
+        string nm = tolower(stripBlankEnds(names[k]));
+        if(nm != "")
+          m_roster_pool.push_back(nm);
+      }
+      handled = !m_roster_pool.empty();
+      if(!handled)
+        reportConfigWarning("Bad roster_pool (need >=1 name): " + orig);
+    }
+    else if(param == "max_boats")
+      handled = setUIntOnString(m_max_boats, value);
+    else if(param == "slot_base_deg")
+      handled = setDoubleOnString(m_slot_base_deg, value);
+    else if(param == "roster_timeout")
+      handled = setDoubleOnString(m_roster_timeout, value);
     else if(param == "square") {
       // "x1,y1:x2,y2:..." -> the fixed corners of the DISPERSE formation.
       m_square_x.clear();
@@ -1341,7 +1444,7 @@ bool ArrivalSync::OnStartUp()
       reportUnhandledConfigWarning(orig);
   }
 
-  if(m_vehicles.empty())
+  if(m_vehicles.empty() && !m_enable_dynamic_roster)
     reportConfigWarning("No vehicle configured: nothing to synchronize.");
 
   registerVariables();

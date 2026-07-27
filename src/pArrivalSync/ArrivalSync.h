@@ -85,6 +85,11 @@ class ArrivalSync : public AppCastingMOOSApp
    void mioRespace();                 // the boats left on the ring re-even (120)
    void cancelMio();                  // drop MIO (return / idle)
    std::string mioSpec() const;       // BHV_Loiter update for the station
+   // Dynamic roster (opt-in): on each fresh deploy, snapshot which pool boats
+   // are actually connected and (re)build the roster with N evenly-spaced ring
+   // slots for exactly that set. Lets a 1-4 boat field lock in on DEPLOY with
+   // no relaunch. Config-fixed 'vehicle=' rosters are unaffected (flag off).
+   void lockRoster();
 
  private: // Configuration (run-in / arrival sync)
    double m_max_speed;          // cruise cap; the farthest boat runs at this
@@ -154,6 +159,14 @@ class ArrivalSync : public AppCastingMOOSApp
    std::string m_mio_flag_var;  // post: MIO_<VNAME> = true/false
    std::string m_mio_update_var;// post: MIO_UPDATE_<VNAME> = polygon=...
 
+ private: // Configuration (dynamic roster, opt-in)
+   bool   m_enable_dynamic_roster;  // false => roster is the fixed 'vehicle=' list
+   std::vector<std::string> m_roster_pool;  // the candidate boat names (e.g. the 5)
+   unsigned int m_max_boats;        // hard cap on how many lock in at once
+   double m_slot_base_deg;          // ring angle of slot 0 (E=0), rest at +i*360/N
+   double m_roster_timeout;         // a boat counts as "present" if its last node
+                                    // report was within this many seconds of deploy
+
    std::vector<std::string>       m_vehicles;   // vehicle names, in config order
    std::map<std::string, double>  m_slot_x;     // vname -> CURRENT slot x
    std::map<std::string, double>  m_slot_y;     // vname -> CURRENT slot y
@@ -171,6 +184,8 @@ class ArrivalSync : public AppCastingMOOSApp
    std::map<std::string, double> m_nav_x;
    std::map<std::string, double> m_nav_y;
    std::map<std::string, bool>   m_have_nav;
+   std::map<std::string, double> m_last_report;  // MOOSTime of each boat's last node
+                                                 // report (dynamic-roster presence test)
    std::map<std::string, bool>   m_arrived;
    std::map<std::string, double> m_dist;          // last computed distance to slot
    std::map<std::string, double> m_cmd_speed;     // last run-in speed commanded
