@@ -1,0 +1,177 @@
+===========================================================================
+ SKARA_N_BOATS — IN-WATER FIELD OPERATIONS RUNBOOK  (the actual SHOW mission)
+ 1-to-4 boat encircle, Skaramangas cove.  Pool of 5: asha bama chip flex ewan.
+ Bring ANY 1-4 of them; the shoreside LOCKS IN whoever is connected on DEPLOY
+ and spaces them EVENLY around the ring (N=1 solo / 2 = 180 / 3 = 120 / 4 = 90).
+ Mission: ~/moos-ivp-xeqtor/missions/skara_N_boats   (git main)
+ Logic/behaviors identical to the water-tested pireas_N_boat; only the LOCATION
+ + op-area + formation geometry differ (skara chart + datum).
+===========================================================================
+
+ #########################################################################
+ ##  WORK-IN-PROGRESS SCAFFOLD — DO NOT RUN FOR THE SHOW YET.            ##
+ ##  Chart + datum + naming are done, but the formation GEOMETRY is      ##
+ ##  still the pireas placement and points at the WRONG physical spot.   ##
+ ##  Finish the geometry first: see GEOMETRY_TODO.md  (grep TODO(skara). ##
+ #########################################################################
+
+  RULE #1:  REAL BOATS ALWAYS RUN AT WARP 1.  Never time-warp real boats.
+  RULE #2:  The 8 m centre no-go (parked show-vessel) and the loiter radii are
+            SOFT IvP preferences, NOT hard limits. Keep an INDEPENDENT abort.
+  RULE #3:  The active set is SNAPSHOTTED ON DEPLOY. Have every boat you want
+            in the formation connected + on the viewer BEFORE you press DEPLOY.
+            A boat that joins later is NOT included until you RETURN and
+            DEPLOY again (which re-locks for whoever is connected then).
+
+  Roles:
+    * SHORESIDE  = laptop. MOOSDB + pMarineViewer + pArrivalSync + heartbeat.
+    * EACH PABLO = one BlueBoat backseat computer. Pool: asha bama chip flex ewan.
+  Ring: center (-144,-43), R=21.5.  Slots are NOT fixed per boat anymore -- they
+  are computed live at DEPLOY (even 360/N) and pushed to each boat.  Max 4 boats
+  lock in at once (a 5th connected boat is left out with a "capping" note).
+
+
+===========================================================================
+ 1.  ON THE LAPTOP (bench, before the dock)
+===========================================================================
+ source ~/.bashrc                              # load MOOS env if not already
+ which nsplug uMAC pMarineViewer pArrivalSync  # all must print paths
+ cd ~/moos-ivp-xeqtor && git pull && ./build.sh   # build.sh REQUIRED: pArrivalSync
+                                               # carries the dynamic-roster change
+ hostname -I                                   # note the field-subnet IP = <LAPTOP_IP>
+
+ # --- pMarineViewer OUT-OF-ORDER PATCH (this is what kills the icon jitter) --
+ # The field radio delivers NODE_REPORTs in ~0.5 s bursts, often newest-first
+ # (~2/3 of arrivals are OLDER than the previous), so stock pMarineViewer draws
+ # them as-is and every icon lurches backward each burst = the "jitter". Our
+ # patched ContactLedger drops out-of-order reports (keeps the newest). It lives
+ # in CORE ~/moos-ivp (UPSTREAM -- our build.sh does NOT touch it and a moos-ivp
+ # `git pull` or fresh clone WIPES it). ALWAYS verify before a run:
+ grep -q "Reject stale / out-of-order" \
+   ~/moos-ivp/ivp/src/lib_geodaid/ContactLedger.cpp && echo PATCH_OK || echo PATCH_MISSING
+ # If PATCH_MISSING, re-apply from our repo + rebuild ONLY the viewer:
+ #   cd ~/moos-ivp && git apply ~/moos-ivp-xeqtor/patches/pmarineviewer_ooo_guard.patch
+ #   cd ~/moos-ivp/build/ivp/lib_geodaid   && make
+ #   cd ~/moos-ivp/build/ivp/pMarineViewer && make
+ # (Details + this exact procedure: ~/moos-ivp-xeqtor/patches/README.md)
+ # The mission shoreside .moos also sets `extrap_policy = mode=cog, decay=2:5`
+ # which glides the icon between reports -- smoothing that is SAFE only because
+ # the patch guarantees the stored record is always the newest.
+
+
+===========================================================================
+ 2.  ON EACH PABLO you are bringing today — first launch of the day
+===========================================================================
+   source ~/.bashrc
+   cd ~/moos-ivp-xeqtor && git pull && ./build.sh
+   cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+   ./init_field.sh                 # REQUIRED: writes vnames/vpositions/vcolors/
+                                   # vslotpos (generated, NOT in git; a fresh clone
+                                   # lacks them). Same 5-boat pool file on every boat.
+   get_robot_info_greece.sh --name        # MUST print one of the pool names exactly:
+                                   #   asha / bama / chip / flex / ewan
+                                   #   (a name NOT in the pool -> Exit Code 5.)
+   get_robot_info_greece.sh --ip          # must NOT be "localhost"
+
+
+===========================================================================
+ 3.  LAUNCH ORDER
+===========================================================================
+ Radios up; confirm every boat you brought reads reachable on the fleet
+ dashboard (http://10.1.0.10) before launching.
+
+ --- SHORESIDE (laptop) ---
+   cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+   ./launch.sh --shoreside --ip=<LAPTOP_IP> 1        # trailing 1 = WARP 1
+
+ --- EACH BOAT (on its own Pablo) ---
+   cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+   ./launch_vehicle.sh --shore=<LAPTOP_IP> 1         # no per-boat flags; self-identifies
+   (run the same on every boat present; ./init_field.sh first if not done this boot)
+
+
+===========================================================================
+ 4.  PRE-DEPLOY CHECKLIST (shoreside viewer)
+===========================================================================
+   [ ] ALL boats you intend to run are present on the viewer (count them!).
+         >> Whoever is NOT on the viewer at DEPLOY will not be in the ring. <<
+   [ ] Each boat's plotted position matches where it physically floats.
+   [ ] uProcessWatch all-present per boat; helm in DRIVE.
+   [ ] Boats near the home cluster (~ -68,-41), bows pointed W toward the ring.
+         homes:  asha(-63,-37) bama(-73,-37) chip(-73,-45) flex(-63,-45) ewan(-68,-41)
+   Dead-man: shore beats HEARTBEAT 1/s; a boat un-deploys if the link drops 15 s.
+
+
+===========================================================================
+ 5.  RUNNING IT (viewer buttons)
+===========================================================================
+   DEPLOY     -> LOCKS IN the connected boats, assigns even 360/N ring slots
+                 (farthest boat released first), then all run in and orbit
+                 evenly spaced.  >> Watch the ring form first. <<
+   DISPERSE   -> boats spread outward to N of the square's 4 corners (nearest,
+                 non-crossing).
+   ASSEMBLE   -> boats re-enter the ring forward and resume the even orbit.
+   MIO        -> the closest boat leaves to guard the r=7 station at (-90.43,-52.25);
+                 the REMAINING boats keep orbiting and re-even among themselves.
+                 (With 1 boat total, that lone boat goes to the station solo.)
+   END-MIO    -> that boat returns; all re-form evenly (360/N).
+   RETURN     -> all head home (each to its OWN home point).   ALL-STOP -> all stop.
+
+   To change the boat set mid-session: RETURN, adjust which boats are up, then
+   DEPLOY again -- it re-locks for whoever is connected.  One command at a time;
+   let the ring settle after DEPLOY before DISPERSE or MIO.
+
+
+===========================================================================
+ 6.  ABORTS (escalate in order)
+===========================================================================
+   1) ALL-STOP   2) RETURN   3) MANUAL OVERRIDE   4) PHYSICAL KILL SWITCH
+   Do not trust the soft no-go around the parked vessel -- keep your own stop.
+
+
+===========================================================================
+ 7.  SHUTDOWN + LOGS
+===========================================================================
+ - End on the laptop: quit the uMAC console / Ctrl-C the launch (halts all apps).
+ - Each Pablo: Ctrl-C its launch_vehicle.sh.
+ - Logs: LOG_<NAME>_* per boat, XLOG_SHORESIDE_* on shore. To review them,
+   DO NOT ./clean.sh (it deletes LOG_*/XLOG_*/targ_*/v*.txt); copy the LOG_* off.
+
+
+===========================================================================
+ 8.  TROUBLESHOOTING
+===========================================================================
+ "nsplug / uMAC: command not found"    -> source ~/.bashrc in that terminal.
+ "'<name>' is not listed in vnames.txt. Exit Code 5"
+       -> get_robot_info_greece.sh --name isn't one of asha/bama/chip/flex/ewan.
+          Fix the boat's identity, or it isn't a pool boat for this mission.
+ "field files missing. Exit Code 4"    -> run ./init_field.sh in the mission dir.
+ A boat is on the viewer but NOT in the ring after DEPLOY
+       -> it connected AFTER you pressed DEPLOY, or was quiet >5 s at that moment
+          (roster_timeout). RETURN, confirm it's live on the viewer, DEPLOY again.
+ "Dynamic roster: ... capping at 4" (pArrivalSync appcast)
+       -> 5 boats were connected; only 4 lock in. Power down / RETURN one boat.
+ A boat un-deploys on its own          -> lost the 15 s shore heartbeat; restore
+                                          the link, re-DEPLOY (re-locks the set).
+ A node never appears on the viewer     -> wrong --shore=<LAPTOP_IP>, or the boat
+                                          can't reach the laptop; ping the laptop
+                                          from the boat; recheck hostname -I.
+
+
+===========================================================================
+ QUICK CARD
+===========================================================================
+   LAPTOP:  hostname -I                                  # -> <LAPTOP_IP>
+            cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+            ./launch.sh --shoreside --ip=<LAPTOP_IP> 1
+
+   EACH BOAT (any of asha/bama/chip/flex/ewan, on its Pablo):
+            cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+            ./init_field.sh                              # first launch of the boot
+            ./launch_vehicle.sh --shore=<LAPTOP_IP> 1
+
+   VIEWER:  ALL intended boats present + positions + DRIVE  ->  DEPLOY
+            ->  even 360/N ring  ->  DISPERSE/ASSEMBLE, MIO/END-MIO.
+            Change the set: RETURN -> adjust boats -> DEPLOY (re-locks).
+            Stop: ALL-STOP > RETURN > manual > kill.  WARP 1 ALWAYS.
+===========================================================================

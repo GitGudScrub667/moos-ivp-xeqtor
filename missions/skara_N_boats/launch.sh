@@ -1,0 +1,150 @@
+#!/bin/bash
+#------------------------------------------------------------
+#  Script: launch.sh   (skara_N_boats - 1-to-4 boat encircle, Pireas)
+#  Launches a shoreside + sim boats from the 5-boat pool
+#  (asha/bama/chip/flex/ewan). On DEPLOY the shoreside LOCKS IN whichever
+#  boats are connected and lays N evenly-spaced ring slots for that set; the
+#  boats run in together and encircle.  Usage: ./launch.sh [--boats=a:b:c] [warp]
+#    --boats picks which sim boats to launch (default: all 5). Real field runs
+#    use --shoreside; the boats launch themselves on their Pablos.
+#------------------------------------------------------------
+vecho() { if [ "$VERBOSE" != "" ]; then echo "$ME: $1"; fi }
+on_exit() { echo; echo "$ME: Halting all apps"; kill -- -$$; }
+trap on_exit SIGINT
+
+ME=$(basename "$0")
+TIME_WARP=1
+VERBOSE=""
+JUST_MAKE=""
+XLAUNCHED="no"
+SHORE_ONLY="no"
+IP_ADDR=""
+SIM_BOATS=""
+
+#------------------------------------------------------------
+for ARGI; do
+    if [ "${ARGI}" = "--help" -o "${ARGI}" = "-h" ]; then
+        echo "$ME [OPTIONS] [time_warp]"
+        echo "  --help, -h        Show this help"
+        echo "  --just_make, -j   Only create targ files (no launch)"
+        echo "  --verbose, -v     Verbose"
+        echo "  --xlaunched, -x   Launch but skip the trailing uMAC"
+        echo "  --boats=<a:b:c>   Which SIM boats to launch, colon-separated,"
+        echo "                    from the pool asha:bama:chip:flex:ewan"
+        echo "                    (default: all 5). Use to test 1-4 boat sets."
+        echo "  --shoreside, -sh  Launch ONLY the shoreside (field use: the"
+        echo "                    real boats launch themselves on their own"
+        echo "                    Pablos via ./launch_vehicle.sh)"
+        echo "  --ip=<addr>       Shoreside IP the boats will connect to"
+        echo "                    (required with --shoreside in the field)"
+        exit 0
+    elif [ "${ARGI//[^0-9]/}" = "$ARGI" -a "$TIME_WARP" = 1 ]; then
+        TIME_WARP=$ARGI
+    elif [ "${ARGI}" = "--verbose" -o "${ARGI}" = "-v" ]; then
+        VERBOSE="-v"
+    elif [ "${ARGI}" = "--just_make" -o "${ARGI}" = "-j" ]; then
+        JUST_MAKE="-j"
+    elif [ "${ARGI}" = "--xlaunched" -o "${ARGI}" = "-x" ]; then
+        XLAUNCHED="yes"
+    elif [ "${ARGI}" = "--shoreside" -o "${ARGI}" = "-sh" ]; then
+        SHORE_ONLY="yes"
+    elif [ "${ARGI:0:8}" = "--boats=" ]; then
+        SIM_BOATS="${ARGI#--boats=*}"
+    elif [ "${ARGI:0:5}" = "--ip=" ]; then
+        IP_ADDR="${ARGI#--ip=*}"
+    else
+        echo "$ME: Bad arg: $ARGI. Exit Code 1."
+        exit 1
+    fi
+done
+
+#------------------------------------------------------------
+#  Part 1: (Re)generate the 5-boat pool (names / homes / colors /
+#  placeholder slots). The active roster is chosen live on DEPLOY.
+#------------------------------------------------------------
+./init_field.sh
+
+VNAMES=($(cat vnames.txt))
+VCOLOR=($(cat vcolors.txt))
+VEHPOS=($(cat vpositions.txt))
+VSLOT=($(cat vslotpos.txt))
+VAMT=${#VNAMES[@]}
+
+CSV_VNAMES=$(IFS=:; echo "${VNAMES[*]}")
+
+#------------------------------------------------------------
+#  Part 2: Launch the shoreside.
+#------------------------------------------------------------
+vecho "Launching shoreside (vnames=$CSV_VNAMES)"
+IPARG=""
+if [ "${IP_ADDR}" != "" ]; then IPARG="--ip=$IP_ADDR"; fi
+./launch_shoreside.sh --auto --mport=9000 --pshare=9200 $IPARG \
+    --vnames=$CSV_VNAMES $JUST_MAKE $VERBOSE $TIME_WARP
+
+#------------------------------------------------------------
+#  Part 3: Launch the vehicles.
+#    Field use (--shoreside): skipped entirely. Each real boat is started
+#    on its own Pablo with ./launch_vehicle.sh (no --sim), which detects
+#    its own name/type/front-seat IP and connects back to --shore=<this IP>.
+#------------------------------------------------------------
+if [ "${SHORE_ONLY}" = "yes" ]; then
+    if [ "${JUST_MAKE}" = "-j" ]; then
+        echo "$ME: Shoreside targ file made; exiting without launch."
+        exit 0
+    fi
+    echo "$ME: Shoreside only. Start each boat on its Pablo with:"
+    echo "$ME:   ./launch_vehicle.sh --shore=${IP_ADDR:-<this-machine-IP>} 1"
+    if [ "${XLAUNCHED}" != "yes" ]; then
+        uMAC --paused targ_shoreside.moos
+        trap "" SIGINT
+        echo; echo "$ME: Halting all apps"
+        kill -- -$$
+    fi
+    exit 0
+fi
+
+# Which sim boats to launch: the --boats subset, or the whole pool by default.
+if [ -n "${SIM_BOATS}" ]; then
+    LAUNCH_NAMES=(${SIM_BOATS//:/ })
+else
+    LAUNCH_NAMES=("${VNAMES[@]}")
+fi
+
+PORTN=0
+for NAME in "${LAUNCH_NAMES[@]}"; do
+    # Find this boat's row in the pool (for its color / home / placeholder slot).
+    IX=-1
+    for j in "${!VNAMES[@]}"; do
+        if [ "${VNAMES[$j]}" = "$NAME" ]; then IX=$j; break; fi
+    done
+    if [ "$IX" = "-1" ]; then
+        echo "$ME: '$NAME' is not in the pool (${CSV_VNAMES}); skipping."
+        continue
+    fi
+    MPORT=$((9001 + PORTN))
+    PSHARE=$((9201 + PORTN))
+    PORTN=$((PORTN + 1))
+    vecho "Launching ${NAME} (mport=$MPORT)"
+    ./launch_vehicle.sh --auto --sim --mport=$MPORT --pshare=$PSHARE \
+        --vname=${NAME}            --color=${VCOLOR[$IX]}   \
+        --start_pos=${VEHPOS[$IX]} --slotpos=${VSLOT[$IX]}  \
+        $JUST_MAKE $VERBOSE $TIME_WARP
+    sleep 0.4
+done
+
+if [ "${JUST_MAKE}" = "-j" ]; then
+    echo "$ME: All targ files made; exiting without launch."
+    exit 0
+fi
+
+#------------------------------------------------------------
+#  Part 4: Unless -x, hold on uMAC until the mission is quit.
+#------------------------------------------------------------
+if [ "${XLAUNCHED}" != "yes" ]; then
+    uMAC --paused targ_shoreside.moos
+    trap "" SIGINT
+    echo; echo "$ME: Halting all apps"
+    kill -- -$$
+fi
+
+exit 0

@@ -1,0 +1,9 @@
+// pMarineViewer chart placement for skaramangas.tif (Esri World Imagery, zoom 18)
+
+lat_north = 37.999409282
+lat_south = 37.996162680
+lon_east  = 23.587646484
+lon_west  = 23.579406738
+
+datum_lat = 37.998009
+datum_lon = 23.581591
