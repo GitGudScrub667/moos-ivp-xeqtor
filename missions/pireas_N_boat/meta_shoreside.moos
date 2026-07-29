@@ -149,6 +149,19 @@ ProcessConfig = pArrivalSync
   // (default 0.4) tunes how hard it prefers forward; raise if a boat reverses.
   disperse_forward_bias = true
 
+  // Retransmit: a DISPERSE/ASSEMBLE/MIO/END-MIO command is a single MOOS var
+  // over the field radio, and on the water one can be dropped -- a boat then
+  // stays in the old formation (seen on the 27-Jul 4-boat run: sometimes only
+  // 3 of 4 dispersed). For reassert_secs after each command the shoreside
+  // re-posts the cached per-boat flags every reassert_interval, so a dropped
+  // packet self-heals with no button dance. Covers DISPERSE/ASSEMBLE (all
+  // boats) and MIO/END-MIO (the one station boat). Every re-post is idempotent
+  // (the ring re-form re-post is guarded by per-boat arrival, so a settled boat
+  // is never kicked off the ring). 0 => off. A repeat same-direction press also
+  // re-asserts.
+  reassert_secs     = 5
+  reassert_interval = 1
+
   // MIO station. On the MIO button the closest boat leaves the ring, holds an
   // r=mio_radius loiter around this fixed point, and the other boat keeps
   // orbiting alone; END MIO recalls it and the two re-form 180 deg apart.

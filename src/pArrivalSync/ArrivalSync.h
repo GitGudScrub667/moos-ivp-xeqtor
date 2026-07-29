@@ -74,6 +74,8 @@ class ArrivalSync : public AppCastingMOOSApp
    void doDisperse();                 // assign corners + send the boats out
    void doAssemble();                 // drop the square, re-run the ring run-in
    void cancelDisperse();             // clear the square (return/idle)
+   void startReassert();              // open a retransmit burst window (after a cmd)
+   void republishFormation();         // re-post the current cached formation flags
    std::string squareSpec(double cx, double cy, const std::string& v) const;
    void drawTarget(const std::string& label, double x, double y,
                    const std::string& color);
@@ -148,6 +150,9 @@ class ArrivalSync : public AppCastingMOOSApp
                                     // back (no-cross preserved)
    double m_disperse_fwd_penalty;   // m of extra assign-cost per degree a corner
                                     // sits behind the orbit direction
+   double m_reassert_secs;          // after a DISPERSE/ASSEMBLE, keep re-posting the
+                                    // per-boat flags for this long (0 = off, one-shot)
+   double m_reassert_interval;      // seconds between re-posts during that window
 
  private: // Configuration (MIO station, opt-in)
    bool   m_enable_mio;
@@ -215,6 +220,8 @@ class ArrivalSync : public AppCastingMOOSApp
    bool m_dispersed;                      // boats are out on the square
    int  m_pending_cmd;                    // queued button press (see CMD_* below)
    std::map<std::string, int> m_corner_of;  // vname -> square corner index (report)
+   double m_reassert_until;               // MOOSTime the retransmit burst ends (0 = idle)
+   double m_reassert_last;                // MOOSTime of the last re-post (interval pacing)
 
    // MIO state
    std::string m_mio_boat;                // boat out on the MIO station ("" = none)

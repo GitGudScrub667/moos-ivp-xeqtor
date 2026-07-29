@@ -65,6 +65,13 @@ ArrivalSync::ArrivalSync()
   m_slotted_var        = "SLOTTED";
   m_disperse_forward_bias = false;   // off => cyclicAssign is pure nearest, as before
   m_disperse_fwd_penalty  = 0.4;     // m per degree-behind; only used when bias is on
+  // Retransmit: over a lossy field radio a single DISPERSE/ASSEMBLE post can be
+  // dropped, leaving one boat in the wrong formation. When enabled, after each
+  // command we re-assert the (cached) per-boat flags for a short burst so a
+  // dropped packet self-heals. Idempotent. Default 0 => off (old one-shot
+  // behaviour, so missions that don't set it are byte-for-byte unchanged).
+  m_reassert_secs     = 0.0;
+  m_reassert_interval = 1.0;
 
   // MIO station (opt-in)
   m_enable_mio     = false;
@@ -88,6 +95,8 @@ ArrivalSync::ArrivalSync()
   m_rejoin_py   = 1e18;
   m_dispersed   = false;
   m_pending_cmd = CMD_NONE;
+  m_reassert_until = 0;
+  m_reassert_last  = 0;
   m_mio_boat      = "";
   m_mio_returning = false;
   m_deployed    = false;
@@ -227,6 +236,17 @@ bool ArrivalSync::Iterate()
     string v = m_vehicles[i];
     if(m_have_nav[v])
       m_dist[v] = hypot(m_slot_x[v]-m_nav_x[v], m_slot_y[v]-m_nav_y[v]);
+  }
+
+  // Retransmit burst: for a few seconds after a DISPERSE/ASSEMBLE, re-assert the
+  // per-boat flags so a packet the field radio dropped self-heals. Idempotent,
+  // and the ring re-post is guarded by !arrived, so this is safe to run here
+  // regardless of formation or deploy state.
+  if((m_reassert_until > 0) && (m_curr_time < m_reassert_until)) {
+    if((m_curr_time - m_reassert_last) >= m_reassert_interval) {
+      republishFormation();
+      m_reassert_last = m_curr_time;
+    }
   }
 
   // The ring passes (run-in + orbit phase-lock) only make sense when the
@@ -807,10 +827,17 @@ void ArrivalSync::handleDisperseCmd(bool on)
     m_pending_cmd = (on ? CMD_DISPERSE : CMD_ASSEMBLE);
     return;
   }
+  // A press that matches the current formation is NOT a no-op: it means the
+  // last command didn't reach every boat. Re-assert (and re-open the burst) so
+  // the stragglers catch up -- no more opposite-then-correct dance needed.
   if(on && !m_dispersed)
     doDisperse();
   else if(!on && m_dispersed)
     doAssemble();
+  else if(m_reassert_secs > 0) {
+    republishFormation();
+    startReassert();
+  }
 }
 
 //---------------------------------------------------------
@@ -842,13 +869,25 @@ void ArrivalSync::handleMioCmd(bool on)
       reportRunWarning("MIO ignored: boats are dispersed");
       return;
     }
-    if(m_mio_boat != "")           // one boat out already
+    if(m_mio_boat != "") {         // one boat out already
+      // A repeat MIO press means the send may not have reached the boat:
+      // re-assert (unless it's already on its way back).
+      if((m_reassert_secs > 0) && !m_mio_returning) {
+        republishFormation();
+        startReassert();
+      }
       return;
+    }
     doMio();
   }
   else {
     if((m_mio_boat != "") && !m_mio_returning)
       endMio();
+    else if((m_reassert_secs > 0) && (m_mio_boat != "") && m_mio_returning) {
+      // Repeat END-MIO while the boat is still transiting back: re-assert recall.
+      republishFormation();
+      startReassert();
+    }
   }
 }
 
@@ -871,6 +910,7 @@ void ArrivalSync::doMio()
   m_arrived[boat] = false;     // it has left the ring
   m_orbit_cmd.erase(boat);
   mioRespace();                // the remaining boats close up to even spacing
+  startReassert();             // retransmit the station send for a few seconds
 }
 
 //---------------------------------------------------------
@@ -947,6 +987,7 @@ void ArrivalSync::endMio()
   Notify(m_slotted_var  + "_" + toupper(v), "false");   // re-run goto_slot
   m_arrived[v]    = false;
   m_mio_returning = true;
+  startReassert();             // retransmit the recall for a few seconds
 }
 
 //---------------------------------------------------------
@@ -1073,6 +1114,7 @@ void ArrivalSync::doDisperse()
 
   m_dispersed    = true;
   m_orbit_active = false;   // the ring clock stops; it restarts on ASSEMBLE
+  startReassert();          // retransmit the corners for a few seconds (lossy link)
 }
 
 //---------------------------------------------------------
@@ -1121,6 +1163,7 @@ void ArrivalSync::doAssemble()
   m_orbit_active = false;   // the clock restarts at the first arrival
   m_staggered    = true;    // offsets already set (all zero): don't recompute
   m_deploy_time  = m_curr_time;
+  startReassert();          // retransmit the re-form bundle for a few seconds
 }
 
 //---------------------------------------------------------
@@ -1134,6 +1177,84 @@ void ArrivalSync::cancelDisperse()
     Notify(m_disp_flag_var + "_" + toupper(m_vehicles[i]), "false");
   m_corner_of.clear();
   m_dispersed = false;
+}
+
+//---------------------------------------------------------
+// Procedure: startReassert()
+//   Open (or re-open) the retransmit window. For the next m_reassert_secs the
+//   Iterate loop re-posts the current formation flags at m_reassert_interval,
+//   so a DISPERSE/ASSEMBLE packet the field radio dropped self-heals.
+
+void ArrivalSync::startReassert()
+{
+  if(m_reassert_secs <= 0)
+    return;
+  m_reassert_until = m_curr_time + m_reassert_secs;
+  m_reassert_last  = 0;   // force an immediate re-post on the next Iterate
+}
+
+//---------------------------------------------------------
+// Procedure: republishFormation()
+//   Re-post the CURRENT committed formation using cached targets (never a
+//   recompute -- assignments must not drift between retransmits). Every post
+//   is idempotent: re-sending a flag a boat already holds is a no-op.
+//     MIO out      -> the station boat's cached station spec + MIO=true
+//     MIO recall   -> that boat's MIO=false + SLOTTED=false + its re-entry point
+//     dispersed    -> each boat's cached corner + DISPERSE=true
+//     ring         -> DISPERSE=false for all; for boats still running IN
+//                     (!arrived) also SLOTTED=false + its cached slot point.
+//   MIO/disperse are mutually exclusive, so exactly one branch is live. The
+//   !arrived guard is what keeps the ring branch safe to fire anytime: a boat
+//   already orbiting only sees DISPERSE=false (which it already holds), so
+//   re-asserting can never kick a settled boat back off the ring.
+
+void ArrivalSync::republishFormation()
+{
+  if(!m_enable_disperse && !m_enable_mio)
+    return;
+
+  // MIO takes precedence: while a boat is out (or transiting back) the relevant
+  // command to re-assert is its MIO flag, not the ring/square flags.
+  if(m_mio_boat != "") {
+    string v = m_mio_boat;
+    if(!m_mio_returning) {                    // out holding the station
+      Notify(m_mio_update_var + "_" + toupper(v), mioSpec());
+      Notify(m_mio_flag_var   + "_" + toupper(v), "true");
+    }
+    else {                                    // recalled: driving back to the ring
+      Notify(m_mio_flag_var + "_" + toupper(v), "false");
+      Notify(m_slotted_var  + "_" + toupper(v), "false");
+      Notify(m_update_var   + "_" + toupper(v),
+             "point=" + doubleToStringX(m_slot_x[v],2) + "," +
+                        doubleToStringX(m_slot_y[v],2));
+    }
+    return;
+  }
+
+  if(m_dispersed) {
+    map<string,int>::const_iterator p;
+    for(p = m_corner_of.begin(); p != m_corner_of.end(); ++p) {
+      const string& v = p->first;
+      unsigned int ci = (unsigned int)p->second;
+      if(ci >= m_square_x.size())
+        continue;
+      Notify(m_disp_update_var + "_" + toupper(v),
+             squareSpec(m_square_x[ci], m_square_y[ci], v));
+      Notify(m_disp_flag_var + "_" + toupper(v), "true");
+    }
+  }
+  else {
+    for(unsigned int i=0; i<m_vehicles.size(); i++) {
+      string v = m_vehicles[i];
+      Notify(m_disp_flag_var + "_" + toupper(v), "false");
+      if(!m_arrived[v]) {   // still transiting in: safe to re-drive the run-in
+        Notify(m_slotted_var + "_" + toupper(v), "false");
+        Notify(m_update_var  + "_" + toupper(v),
+               "point=" + doubleToStringX(m_slot_x[v],2) + "," +
+                          doubleToStringX(m_slot_y[v],2));
+      }
+    }
+  }
 }
 
 //---------------------------------------------------------
@@ -1383,6 +1504,10 @@ bool ArrivalSync::OnStartUp()
     else if(param == "disperse_cmd_var") {
       m_disperse_cmd_var = value; handled = true;
     }
+    else if(param == "reassert_secs")
+      handled = setDoubleOnString(m_reassert_secs, value);
+    else if(param == "reassert_interval")
+      handled = setDoubleOnString(m_reassert_interval, value);
     else if(param == "enable_mio")
       handled = setBooleanOnString(m_enable_mio, value);
     else if(param == "mio_x")
@@ -1512,11 +1637,19 @@ bool ArrivalSync::buildReport()
     string pend = "(none)";
     if(m_pending_cmd == CMD_DISPERSE) pend = "DISPERSE queued (waiting on detour)";
     if(m_pending_cmd == CMD_ASSEMBLE) pend = "ASSEMBLE queued (waiting on detour)";
+    string reassert = "off";
+    if(m_reassert_secs > 0) {
+      bool bursting = (m_reassert_until > 0) && (m_curr_time < m_reassert_until);
+      reassert = doubleToStringX(m_reassert_secs,0) + "s/" +
+                 doubleToStringX(m_reassert_interval,0) + "s " +
+                 (bursting ? "RE-ASSERTING" : "armed");
+    }
     m_msgs << "disperse:       " << (m_dispersed ? "SQUARE" : "ring")
            << "  corners=" << m_square_x.size()
            << "  loiter r" << doubleToStringX(m_square_radius,1)
            << "  fwd-bias=" << (m_disperse_forward_bias ? "on" : "off")
            << "  pending=" << pend << endl;
+    m_msgs << "retransmit:     " << reassert << endl;
   }
   if(m_enable_mio) {
     string st = "(none)";
