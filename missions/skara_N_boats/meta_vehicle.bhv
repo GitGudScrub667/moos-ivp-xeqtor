@@ -117,7 +117,7 @@ Behavior = BHV_Loiter
   updates    = DISPERSE_UPDATE
   perpetual  = true
 
-  speed        = 1.4
+  speed        = 1.61
   clockwise    = false
   radius       = 4.0
   nm_radius    = 8.0
@@ -147,7 +147,7 @@ Behavior = BHV_Loiter
   updates    = MIO_UPDATE
   perpetual  = true
 
-  speed        = 1.4
+  speed        = 1.61
   clockwise    = false
   radius       = 7.0
   nm_radius    = 12.0
@@ -221,10 +221,10 @@ Behavior = BHV_OpRegionV24
   pwt       = 300
   condition = DEPLOY = true
 
-  // TODO(skara geometry): DRAW a new op-region on the skara chart (this is the
-  // pireas polygon). It must contain the ring + DISPERSE square + MIO station
-  // + all home run-in paths, with margin for save_dist/halt_dist below.
-  core_poly = pts={-190,-0.9: -190,-86: -76,-86: -16,6: -79,4}
+  // Skaramangas op-region (drawn on the skara chart). Contains the ring (85,-50
+  // r33), DISPERSE square, MIO station (175,-75) and all home run-in paths,
+  // with margin for save_dist/halt_dist below. All edges in open water.
+  core_poly = pts={-5,-15: 70,25: 190,12: 230,-70: 150,-165: 10,-168}
 
   save_dist   = 3
   halt_dist   = 15
@@ -245,17 +245,14 @@ Behavior = BHV_OpRegionV24
 
 //----------------------------------------------
 // 7. SHOW-VESSEL no-go zone. During the show a sizeable vessel PARKS at
-//    the centre of the encircle ring (-144,-43). Modelled as an 8 m radius
+//    the centre of the encircle ring (85,-50). Modelled as a 9 m radius
 //    octagon obstacle so our boats are NEVER at risk of hitting it.
-//    The clean orbit sits 13.5 m off this zone (ring R=21.5 minus 8 m),
-//    well outside pwt_outer_dist (9), so it does NOT perturb normal
-//    encircling; it only fires when a path cuts toward the centre --
-//    notably the far-side (W) boat's straight deploy/return transit,
-//    which gets pushed around it.
-//    A touch more conservative than the buoys (min CPA 5 vs 4).
-//    NOTE: the 8 points are hardcoded for centre (-144,-43); recompute
-//    them if CIRCLE_X / CIRCLE_Y change (nsplug can't do the octagon
-//    arithmetic from $(CIRCLE_*)).
+//    The clean orbit sits 24 m off this zone (ring R=33 minus 9 m), well
+//    outside pwt_outer_dist (9), so it does NOT perturb normal encircling;
+//    it only fires when a path cuts toward the centre.
+//    NOTE: the 8 points are hardcoded for centre (85,-50); recompute them
+//    if the ring center changes (nsplug can't do the octagon arithmetic
+//    from $(CIRCLE_*)).
 Behavior = BHV_AvoidObstacleV24
 {
   name       = avdob_show_vessel
@@ -266,8 +263,8 @@ Behavior = BHV_AvoidObstacleV24
   condition  = MODE == ACTIVE
   perpetual  = true
 
-  // TODO(skara): DERIVED -- 8 m octagon centred on the RING center. Recompute when the ring moves.
-  polygon    = pts={-136,-43:-138.34,-37.34:-144,-35:-149.66,-37.34:-152,-43:-149.66,-47.66:-144,-51:-138.34,-47.66}, label=show_vessel
+  // 9 m octagon centred on the RING center (85,-50) -- the parked show vessel.
+  polygon    = pts={94,-50:91.36,-43.64:85,-41:78.64,-43.64:76,-50:78.64,-56.36:85,-59:91.36,-56.36}, label=show_vessel
 
   allowable_ttc     = 20
   pwt_outer_dist    = 9
@@ -279,17 +276,15 @@ Behavior = BHV_AvoidObstacleV24
 }
 
 //----------------------------------------------
-// 8. MIO STATION no-go. A 4 m object sits at the centre of the MIO loiter
-//    station (-90.43,-52.25); the guarding boat circles it at r=7 (see the
+// 8. MIO STATION no-go. A 4.4 m object sits at the centre of the MIO loiter
+//    station (175,-75); the guarding boat circles it at r=7.7 (see the
 //    mio_loiter behaviour, section 2c). Active ONLY during MIO
 //    (MODE==MIO_STATION): the object is only there while a boat is guarding the
-//    station, so it does NOT need avoiding the rest of the time -- and gating it
-//    keeps deploy/return transits (whose straight path from the eastern homes to
-//    the ring passes right over this spot) from driving through the zone and
-//    spamming "m_obstacle contains osx,osy" (avoidance can't build while the
-//    ownship is inside the obstacle).
+//    station, so it does NOT need avoiding the rest of the time -- and gating
+//    it keeps any transit that passes the station from tripping "m_obstacle
+//    contains osx,osy" (avoidance can't build while the ownship is inside it).
 //    Its avoidance envelope is kept SMALL (pwt_outer_dist 2) so it never
-//    fights the r=7 loiter: the boat sits ~3 m outside this zone edge and the
+//    fights the r=7.7 loiter: the boat sits just outside this zone edge and the
 //    loiter's own outward bias holds it there. This is the hard backstop if a
 //    boat ever cuts in toward the object while guarding it.
 Behavior = BHV_AvoidObstacleV24
@@ -304,8 +299,8 @@ Behavior = BHV_AvoidObstacleV24
                                      // station, so avoid it only then.
   perpetual  = true
 
-  // TODO(skara): DERIVED -- 4 m octagon centred on the MIO station (mio_x/mio_y). Recompute when it moves.
-  polygon    = pts={-86.43,-52.25:-87.60,-49.42:-90.43,-48.25:-93.26,-49.42:-94.43,-52.25:-93.26,-55.08:-90.43,-56.25:-87.60,-55.08}, label=mio_nogo
+  // 4.4 m octagon centred on the MIO station (175,-75). Keep synced with mio_x/mio_y.
+  polygon    = pts={179.4,-75:178.11,-71.89:175,-70.6:171.89,-71.89:170.6,-75:171.89,-78.11:175,-79.4:178.11,-78.11}, label=mio_nogo
 
   allowable_ttc     = 20
   pwt_outer_dist    = 2

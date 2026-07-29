@@ -9,10 +9,10 @@
 ===========================================================================
 
  #########################################################################
- ##  WORK-IN-PROGRESS SCAFFOLD — DO NOT RUN FOR THE SHOW YET.            ##
- ##  Chart + datum + naming are done, but the formation GEOMETRY is      ##
- ##  still the pireas placement and points at the WRONG physical spot.   ##
- ##  Finish the geometry first: see GEOMETRY_TODO.md  (grep TODO(skara). ##
+ ##  GEOMETRY PLACED (ring 85,-50 r33 / MIO 175,-75 / op-area drawn),    ##
+ ##  but NOT YET VALIDATED. Sim-check the full mission, then water-test  ##
+ ##  at Skaramangas, before running it for the show. Still to fine-tune: ##
+ ##  pMarineViewer pan/zoom (GUI). See GEOMETRY_TODO.md.                 ##
  #########################################################################
 
   RULE #1:  REAL BOATS ALWAYS RUN AT WARP 1.  Never time-warp real boats.

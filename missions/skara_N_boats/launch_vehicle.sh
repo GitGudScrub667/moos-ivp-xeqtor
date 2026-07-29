@@ -26,8 +26,8 @@ COLOR="coral"
 START_POS="x=0,y=0,heading=0"
 SLOT_POS="0,0"
 RETURN_POS=""
-ORBIT_SPD="1.4"
-MAX_SPD="2.8"
+ORBIT_SPD="1.61"   # pireas 1.4 x1.15
+MAX_SPD="3.22"     # pireas 2.8 x1.15 (stays above pArrivalSync orbit_max 2.82)
 
 # XMODE: SIM (simulated boat) or BBOAT (real BlueBoat backseat stack).
 # Left EMPTY means "this is a real robot" -- identity, type and front-seat
@@ -36,15 +36,11 @@ MAX_SPD="2.8"
 XMODE=""
 FSEAT_IP=""
 
-# The common ring (same for every boat). Sited in the widened trapezoid
-# op-region. Scaled up x1.15 (was 18.7): corner loiters now ~4.2 m clear of
-# the op-edge, ~10.4 m clear of the buoy zones.
-# TODO(skara geometry): these are drawn on the viewer (the ring circle the boats
-# render) and MUST MATCH the shoreside pArrivalSync circle_x/y/rad exactly.
-# Still the pireas values -- update in lockstep with meta_shoreside.moos.
-CIRCLE_X="-144"
-CIRCLE_Y="-43"
-CIRCLE_RAD="21.5"
+# The common ring (same for every boat), drawn on the viewer. MUST MATCH the
+# shoreside pArrivalSync circle_x/y/rad exactly -- update in lockstep.
+CIRCLE_X="85"
+CIRCLE_Y="-50"
+CIRCLE_RAD="33"
 
 #------------------------------------------------------------
 for ARGI; do

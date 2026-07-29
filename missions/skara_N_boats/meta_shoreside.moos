@@ -105,8 +105,8 @@ ProcessConfig = pArrivalSync
   AppTick   = 4
   CommsTick = 4
 
-  max_speed        = 2.1
-  min_speed        = 0.28
+  max_speed        = 2.42    // pireas 2.1 x1.15 (water-tested safe headroom)
+  min_speed        = 0.32    // pireas 0.28 x1.15
   min_arrival_time = 8
   capture_dist     = 6
   stagger_time     = 5     // secs between boat releases (farthest first)
@@ -115,42 +115,29 @@ ProcessConfig = pArrivalSync
   return_var = RETURN_ALL
   update_var = SLOT_UPDATE
 
-  // ###################################################################
-  // ## TODO(skara geometry): ALL coordinates below are still the PIREAS
-  // ## values, in the OLD frame. They point to the wrong physical spot
-  // ## under the skara datum -- DO NOT run for the show until re-placed.
-  // ## Primary anchors to set on the skara chart: RING (circle_x/y/rad),
-  // ## MIO station (mio_x/y). The DISPERSE square + the show_vessel and
-  // ## mio_nogo obstacle polygons (in meta_vehicle.bhv) DERIVE from these.
-  // ## Op-region (meta_vehicle.bhv core_poly) + homes (init_field.sh) too.
-  // ## Master checklist: GEOMETRY_TODO.md.
-  // ###################################################################
-
-  // Orbit phase-lock (this is the pireas_2boat improvement over the base mission)
+  // Skaramangas show geometry (placed on the skara chart 2026-07-29). Ring is
+  // the primary anchor; the DISPERSE square + the show_vessel/mio_nogo obstacle
+  // polygons (meta_vehicle.bhv) derive from the ring + MIO. MUST match the
+  // CIRCLE_X/Y/RAD drawn in launch_vehicle.sh.
   enable_orbit_lock = true
-  circle_x    = -144      // TODO(skara): ring center X
-  circle_y    = -43       // TODO(skara): ring center Y
-  circle_rad  = 21.5      // TODO(skara): ring radius (maybe rescale)
-  orbit_speed = 1.4
+  circle_x    = 85        // ring center (85,-50), r33 -- central Skaramangas basin
+  circle_y    = -50
+  circle_rad  = 33
+  orbit_speed = 1.61      // pireas 1.4 x1.15
   orbit_gain  = 0.03      // m/s of speed correction per degree of phase error
-  orbit_min   = 0.7
-  orbit_max   = 2.45      // headroom for the re-spacing boats to catch up on rejoin
+  orbit_min   = 0.81      // pireas 0.7 x1.15
+  orbit_max   = 2.82      // pireas 2.45 x1.15 (re-spacing catch-up headroom)
   orbit_var   = ENCIRCLE_UPDATE
 
-  // DISPERSE / ASSEMBLE square formation (pireas_2boat feature).
-  // Axis-aligned square centred on the ring (-144,-43), half-side 28.52
-  // (scaled x1.15 with the ring), so it CONTAINS the r=21.5 ring (no
-  // crossing) and its corners sit outside the ring for the outward disperse.
-  // Corners kept clear of the op-region edge and the (eastern) buoys. On
+  // DISPERSE / ASSEMBLE square formation. Axis-aligned square centred on the
+  // ring (85,-50), half-side 37.95 (= 1.15 * ring_radius 33), so it CONTAINS
+  // the r=33 ring and its corners sit outside the ring for the outward
+  // disperse. All four corners sit in open water inside the op-region. On
   // DISPERSE each boat takes its nearest corner (cyclic order so no two cross).
-  // Clearances (corner loiters modelled at their audited 1.27x size):
-  // ~4.2 m to the op-region edge, ~10.4 m to the nearest buoy zone.
   enable_disperse   = true
-  // TODO(skara): DERIVED from the ring -- axis-aligned square centred on the
-  // ring center, half-side ~= 1.15*ring_radius. Recompute once the ring moves.
-  square            = -115.48,-14.48:-172.52,-14.48:-172.52,-71.52:-115.48,-71.52
+  square            = 122.95,-12.05:47.05,-12.05:47.05,-87.95:122.95,-87.95
   square_radius     = 8        // turn-radius floor; NOT scaled with the formation
-  disperse_speed    = 1.4
+  disperse_speed    = 1.61     // pireas 1.4 x1.15
   disperse_cmd_var  = DISPERSE_CMD
   // Forward-bias for BOTH transitions, broken on the nearest-target tie:
   //  - DISPERSE: each boat peels off to the corner AHEAD in the orbit (CCW)
@@ -178,16 +165,14 @@ ProcessConfig = pArrivalSync
   // MIO station. On the MIO button the closest boat leaves the ring, holds an
   // r=mio_radius loiter around this fixed point, and the other boat keeps
   // orbiting alone; END MIO recalls it and the two re-form 180 deg apart.
-  // TODO(skara): re-place the station on the skara chart (the stale lat/lon
-  // comment below is the PIREAS station). The mio_nogo obstacle poly in
-  // meta_vehicle.bhv is centred here and must move with it.
-  // Station center is local (-90.43,-52.25) = Lat 37.93278911 Lon 23.62718844.
-  // The 4 m no-go at the centre is a static obstacle in meta_vehicle.bhv.
+  // MIO station: local (175,-75), ~93 m E of the ring center in open water.
+  // The 4.4 m no-go at the centre is a static obstacle in meta_vehicle.bhv
+  // (mio_nogo, centred here -- keep the two in sync).
   enable_mio  = true
-  mio_x       = -90.43    // TODO(skara): MIO station X
-  mio_y       = -52.25    // TODO(skara): MIO station Y
-  mio_radius  = 7
-  mio_speed   = 1.4
+  mio_x       = 175
+  mio_y       = -75
+  mio_radius  = 7.7      // pireas 7 x1.1 (guard loiter around the station object)
+  mio_speed   = 1.61     // pireas 1.4 x1.15
   mio_cmd_var = MIO_CMD
 
   // Dynamic roster (skara_N_boats): no fixed 'vehicle=' slots. On each fresh

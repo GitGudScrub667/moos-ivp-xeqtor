@@ -11,22 +11,19 @@
 #
 #  One value per line, one line per boat, same order:
 #      asha  bama  chip  flex  ewan
-#  Ring: center (-144,-43), radius 21.5 (scaled x1.15), sited in the
-#  widened trapezoid op-region.
+#  Ring: center (85,-50), radius 33, in the central Skaramangas basin.
 #------------------------------------------------------------
 
 # Home / start + return positions, one per POOL boat, looked up BY NAME by
 # launch_vehicle.sh (RETURN goes here; a boat always returns to its own home,
 # independent of how many boats deployed).
-# TODO(skara geometry): the 5 rows below are the PIREAS home cluster + headings
-# (a tight cluster E of the ring, all headed W toward the pireas ring center).
-# Re-place the cluster near the skara launch/recovery point and re-aim each
-# heading toward the NEW ring center. Keep them clear of the MIO station + no-go.
-echo "x=-63,y=-37,heading=266" >  vpositions.txt   # asha
-echo "x=-73,y=-37,heading=265" >> vpositions.txt   # bama
-echo "x=-73,y=-45,heading=272" >> vpositions.txt   # chip
-echo "x=-63,y=-45,heading=271" >> vpositions.txt   # flex
-echo "x=-68,y=-41,heading=268" >> vpositions.txt   # ewan
+# Skaramangas: a tight cluster off the SOUTH beach, ~100 m S of the ring, each
+# headed NNE toward the ring center (85,-50) for a clean deploy run-in.
+echo "x=47,y=-150,heading=21" >  vpositions.txt   # asha
+echo "x=57,y=-150,heading=16" >> vpositions.txt   # bama
+echo "x=67,y=-150,heading=10" >> vpositions.txt   # chip
+echo "x=52,y=-158,heading=17" >> vpositions.txt   # flex
+echo "x=62,y=-158,heading=12" >> vpositions.txt   # ewan
 
 # Placeholder ring slot only (East point). The REAL slot for each boat is
 # computed + pushed live by pArrivalSync on DEPLOY (even 360/N spacing over
