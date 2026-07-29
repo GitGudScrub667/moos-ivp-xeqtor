@@ -1,0 +1,28 @@
+diff --git a/ivp/src/lib_geodaid/ContactLedger.cpp b/ivp/src/lib_geodaid/ContactLedger.cpp
+index cf07d9ed4..0a9d88635 100644
+--- a/ivp/src/lib_geodaid/ContactLedger.cpp
++++ b/ivp/src/lib_geodaid/ContactLedger.cpp
+@@ -225,7 +225,22 @@ string ContactLedger::processNodeRecord(NodeRecord record,
+   m_total_reports++;
+   
+   string vname = record.getName();
+-  
++
++  // ========================================================
++  // Part 0: Reject stale / out-of-order reports. Field radios deliver
++  //   NODE_REPORTs in bursts that are frequently newest-first, so a large
++  //   fraction of arrivals (~2/3 on the greece link) are OLDER than the one
++  //   already stored. Overwriting with an older record drags the drawn icon
++  //   backward on every burst -- rendered as position jitter even though the
++  //   true track is smooth. Keep only monotonically-newer reports per vehicle.
++  //   Return the vname (not "") so the caller counts it handled and does not
++  //   raise an unhandled-mail warning for each dropped report.
++  // ========================================================
++  if(record.isSetTimeStamp() && m_map_records_rep.count(vname)) {
++    if(record.getTimeStamp() < m_map_records_rep[vname].getTimeStamp())
++      return(vname);
++  }
++
+   m_total_reports_valid++;
+ 
+   // ========================================================

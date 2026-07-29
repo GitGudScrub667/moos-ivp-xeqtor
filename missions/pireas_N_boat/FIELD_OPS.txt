@@ -32,6 +32,24 @@
                                                # carries the dynamic-roster change
  hostname -I                                   # note the field-subnet IP = <LAPTOP_IP>
 
+ # --- pMarineViewer OUT-OF-ORDER PATCH (this is what kills the icon jitter) --
+ # The field radio delivers NODE_REPORTs in ~0.5 s bursts, often newest-first
+ # (~2/3 of arrivals are OLDER than the previous), so stock pMarineViewer draws
+ # them as-is and every icon lurches backward each burst = the "jitter". Our
+ # patched ContactLedger drops out-of-order reports (keeps the newest). It lives
+ # in CORE ~/moos-ivp (UPSTREAM -- our build.sh does NOT touch it and a moos-ivp
+ # `git pull` or fresh clone WIPES it). ALWAYS verify before a run:
+ grep -q "Reject stale / out-of-order" \
+   ~/moos-ivp/ivp/src/lib_geodaid/ContactLedger.cpp && echo PATCH_OK || echo PATCH_MISSING
+ # If PATCH_MISSING, re-apply from our repo + rebuild ONLY the viewer:
+ #   cd ~/moos-ivp && git apply ~/moos-ivp-xeqtor/patches/pmarineviewer_ooo_guard.patch
+ #   cd ~/moos-ivp/build/ivp/lib_geodaid   && make
+ #   cd ~/moos-ivp/build/ivp/pMarineViewer && make
+ # (Details + this exact procedure: ~/moos-ivp-xeqtor/patches/README.md)
+ # The mission shoreside .moos also sets `extrap_policy = mode=cog, decay=2:5`
+ # which glides the icon between reports -- smoothing that is SAFE only because
+ # the patch guarantees the stored record is always the newest.
+
 
 ===========================================================================
  2.  ON EACH PABLO you are bringing today — first launch of the day
