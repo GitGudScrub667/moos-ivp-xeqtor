@@ -241,6 +241,10 @@ Behavior = BHV_OpRegionV24
 Behavior = BHV_AvoidObstacleV24
 {
   name       = avdob_buoy_1
+  holonomic_ok = true   // silence the per-iter "holo plat_model not best" helm
+                        // warning (cosmetic only; gates just the nag, not the
+                        // avoidance math -- BHV_AvoidObstacleV24.cpp:366). Set
+                        // on all 5 obstacle behaviors below for the same reason.
   pwt        = 350
   condition  = AVOID = true
   condition  = MODE == ACTIVE
@@ -260,6 +264,7 @@ Behavior = BHV_AvoidObstacleV24
 Behavior = BHV_AvoidObstacleV24
 {
   name       = avdob_buoy_2
+  holonomic_ok = true   // silence "holo plat_model not best" (see avdob_buoy_1)
   pwt        = 350
   condition  = AVOID = true
   condition  = MODE == ACTIVE
@@ -279,6 +284,7 @@ Behavior = BHV_AvoidObstacleV24
 Behavior = BHV_AvoidObstacleV24
 {
   name       = avdob_buoy_3
+  holonomic_ok = true   // silence "holo plat_model not best" (see avdob_buoy_1)
   pwt        = 350
   condition  = AVOID = true
   condition  = MODE == ACTIVE
@@ -311,6 +317,7 @@ Behavior = BHV_AvoidObstacleV24
 Behavior = BHV_AvoidObstacleV24
 {
   name       = avdob_show_vessel
+  holonomic_ok = true   // silence "holo plat_model not best" (see avdob_buoy_1)
   pwt        = 350
   condition  = AVOID = true
   condition  = MODE == ACTIVE
@@ -330,17 +337,26 @@ Behavior = BHV_AvoidObstacleV24
 //----------------------------------------------
 // 8. MIO STATION no-go. A 4 m object sits at the centre of the MIO loiter
 //    station (-90.43,-52.25); the guarding boat circles it at r=7 (see the
-//    mio_loiter behaviour, section 2c). Permanent obstacle, like the buoys.
+//    mio_loiter behaviour, section 2c). Active ONLY during MIO
+//    (MODE==MIO_STATION): the object is only there while a boat is guarding the
+//    station, so it does NOT need avoiding the rest of the time -- and gating it
+//    keeps deploy/return transits (whose straight path from the eastern homes to
+//    the ring passes right over this spot) from driving through the zone and
+//    spamming "m_obstacle contains osx,osy" (avoidance can't build while the
+//    ownship is inside the obstacle).
 //    Its avoidance envelope is kept SMALL (pwt_outer_dist 2) so it never
 //    fights the r=7 loiter: the boat sits ~3 m outside this zone edge and the
 //    loiter's own outward bias holds it there. This is the hard backstop if a
-//    boat ever cuts in toward the object.
+//    boat ever cuts in toward the object while guarding it.
 Behavior = BHV_AvoidObstacleV24
 {
   name       = avdob_mio_nogo
+  holonomic_ok = true   // silence "holo plat_model not best" (see avdob_buoy_1)
   pwt        = 350
   condition  = AVOID = true
-  condition  = MODE == ACTIVE
+  condition  = MODE == MIO_STATION   // MIO-only (see note above): the object
+                                     // exists only while a boat guards the
+                                     // station, so avoid it only then.
   perpetual  = true
 
   polygon    = pts={-86.43,-52.25:-87.60,-49.42:-90.43,-48.25:-93.26,-49.42:-94.43,-52.25:-93.26,-55.08:-90.43,-56.25:-87.60,-55.08}, label=mio_nogo
