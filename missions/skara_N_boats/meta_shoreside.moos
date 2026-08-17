@@ -148,6 +148,7 @@ ProcessConfig = pArrivalSync
   // Still non-crossing, no two boats share a target. disperse_fwd_penalty
   // (default 0.4) tunes how hard it prefers forward; raise if a boat reverses.
   disperse_forward_bias = true
+  disperse_fwd_penalty  = 3.0      // raised from default 0.4: push a just-passed-corner boat to the corner AHEAD so it enters the CCW loiter tangentially (no U-turn loop)
 
   // Retransmit: a DISPERSE/ASSEMBLE/MIO/END-MIO command is a single MOOS var
   // over the field radio, and on the water one can be dropped -- a boat then
