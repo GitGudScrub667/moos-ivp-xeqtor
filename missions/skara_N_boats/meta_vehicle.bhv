@@ -224,7 +224,7 @@ Behavior = BHV_OpRegionV24
   // Skaramangas op-region (drawn on the skara chart). Contains the ring (85,-50
   // r33), DISPERSE square, MIO station (175,-75) and all home run-in paths,
   // with margin for save_dist/halt_dist below. All edges in open water.
-  core_poly = pts={-5,-15: 70,25: 190,12: 230,-70: 150,-165: 10,-168}
+  core_poly = pts={-5,-15: 70,25: 190,12: 230,-70: 150,-155: 10,-168}
 
   save_dist   = 3
   halt_dist   = 15
