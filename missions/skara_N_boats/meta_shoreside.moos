@@ -63,6 +63,15 @@ ProcessConfig = uFldShoreBroker
   qbridge = NODE_REPORT, NODE_MESSAGE
   qbridge = MOOS_MANUAL_OVERRIDE, APPCAST_REQ
   qbridge = SLOT_UPDATE
+  // RETURN_UPDATE carries the center-detour route home (pArrivalSync posts
+  // RETURN_UPDATE_<VNAME>; waypt_return subscribes to RETURN_UPDATE). Without
+  // this bridge the shoreside computes the route correctly and the boat never
+  // hears it -- the helm registers for the variable but no value ever arrives,
+  // so waypt_return keeps the single baked-in RETURN_POS and beelines home
+  // straight across the show vessel. Every other *_UPDATE below is bridged for
+  // the same reason; RETURN_UPDATE was the one that had no publisher until the
+  // center-detour was added.
+  qbridge = RETURN_UPDATE
   qbridge = ENCIRCLE_UPDATE
   qbridge = DISPERSE, DISPERSE_UPDATE
   qbridge = MIO, MIO_UPDATE
