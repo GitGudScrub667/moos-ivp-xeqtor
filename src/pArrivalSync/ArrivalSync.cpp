@@ -83,6 +83,12 @@ ArrivalSync::ArrivalSync()
   m_mio_flag_var   = "MIO";
   m_mio_update_var = "MIO_UPDATE";
 
+  // Center-detour config (opt-in; off => every other mission is unaffected)
+  m_enable_center_detour = false;
+  m_detour_radius        = 26.0;
+  m_detour_max_leg_deg   = 45.0;
+  m_return_update_var    = "RETURN_UPDATE";
+
   // Dynamic roster (opt-in)
   m_enable_dynamic_roster = false;
   m_max_boats             = 4;
@@ -150,15 +156,38 @@ bool ArrivalSync::OnNewMail(MOOSMSG_LIST &NewMail)
           // a fresh deploy puts everyone back on their canonical slot.
           m_slot_x[v] = m_slot0_x[i];
           m_slot_y[v] = m_slot0_y[i];
-          Notify(m_update_var + "_" + toupper(v),
-                 "point=" + doubleToStringX(m_slot_x[v],2) + "," +
-                            doubleToStringX(m_slot_y[v],2));
+          // The run-in to a far-side slot would cross the ring centre, so
+          // route it around the show vessel when center-detour is enabled.
+          // The detour point is remembered: the arrival-sync distance below
+          // has to be measured VIA it, or this boat arrives late.
+          m_path_x[v].clear();
+          m_path_y[v].clear();
+          m_path_idx[v] = 0;
+          if(m_have_nav[v])
+            centerDetourPath(m_nav_x[v], m_nav_y[v], m_slot_x[v], m_slot_y[v],
+                             m_path_x[v], m_path_y[v]);
+          string spec = "points=";
+          for(unsigned int k=0; k<m_path_x[v].size(); k++)
+            spec += doubleToStringX(m_path_x[v][k],2) + "," +
+                    doubleToStringX(m_path_y[v][k],2) + ":";
+          spec += doubleToStringX(m_slot_x[v],2) + "," + doubleToStringX(m_slot_y[v],2);
+          if(m_path_x[v].empty())
+            spec = "point=" + doubleToStringX(m_slot_x[v],2) + "," +
+                              doubleToStringX(m_slot_y[v],2);
+          Notify(m_update_var + "_" + toupper(v), spec);
+          m_detoured[v] = !m_path_x[v].empty();
           m_phase_off[v] = slotAngleDeg(v);
         }
       }
     }
-    else if(key == m_return_var)
+    else if(key == m_return_var) {
+      bool was_returning = m_returning;
       m_returning = (tolower(msg.GetString()) == "true");
+      // A fresh RETURN: hand every boat its route home, detoured around the
+      // show vessel if the straight run would cross it.
+      if(m_returning && !was_returning)
+        postReturnPaths();
+    }
 
     else if(key == m_target_var)
       handleTargetDetect(msg.GetString());
@@ -235,7 +264,7 @@ bool ArrivalSync::Iterate()
   for(unsigned int i=0; i<m_vehicles.size(); i++) {
     string v = m_vehicles[i];
     if(m_have_nav[v])
-      m_dist[v] = hypot(m_slot_x[v]-m_nav_x[v], m_slot_y[v]-m_nav_y[v]);
+      m_dist[v] = remainingPath(v, m_slot_x[v], m_slot_y[v]);
   }
 
   // Retransmit burst: for a few seconds after a DISPERSE/ASSEMBLE, re-assert the
@@ -405,7 +434,12 @@ void ArrivalSync::computeReleaseOffsets()
     m_release_offset[v] = 0;   // default: release immediately
     if(!m_have_nav[v])
       continue;
-    double d = hypot(m_slot_x[v]-m_nav_x[v], m_slot_y[v]-m_nav_y[v]);
+    // Use the live remaining-PATH length, not the straight line: a boat with
+    // a center-detour ahead of it has further to travel than the crow flies,
+    // and farthest-first only keeps the pack together if the ranking reflects
+    // the real transit. Iterate() refreshes m_dist just above this call.
+    double d = m_dist.count(v) ? m_dist[v]
+                               : hypot(m_slot_x[v]-m_nav_x[v], m_slot_y[v]-m_nav_y[v]);
     order.push_back(make_pair(d, v));
   }
 
@@ -792,6 +826,179 @@ void ArrivalSync::cancelInvestigation()
   }
   m_rejoin_px = 1e18;
   m_rejoin_py = 1e18;
+}
+
+//---------------------------------------------------------
+// Procedure: centerDetourPath()
+//   The boats ring the show vessel but all launch from one shore, so a boat
+//   slotted on the far side would run straight across the middle on the way
+//   out and on the way home. This tests the straight run (sx,sy)->(tx,ty)
+//   against a keep-out disc of radius m_detour_radius centred on the ring,
+//   and if it cuts through, fills (px,py) with waypoints that route around.
+//
+//   Two things matter in how the waypoints are placed:
+//
+//   1. DIRECTION. The arc is walked COUNTER-CLOCKWISE from the start bearing
+//      to the target bearing -- deliberately CCW, the same sense as the orbit,
+//      rather than whichever side happens to be shorter. Shortest-side routing
+//      lets two boats pick opposite sides of the disc and converge head-on;
+//      sending everyone the same way round means simultaneous transits follow
+//      one another instead.
+//
+//   2. STEP SIZE. A single waypoint on the far side is NOT enough: the boat
+//      flies straight lines between waypoints, and a long chord across the
+//      keep-out circle sags back inside it (a 180 deg leg cuts straight
+//      through the centre -- exactly what we are avoiding). So the arc is
+//      split into legs of at most m_detour_max_leg_deg, which bounds the sag
+//      to radius*(1-cos(leg/2)).
+//
+//   Returns false (no detour) when the feature is off, the ring is not
+//   configured, or the straight run already clears the disc.
+
+bool ArrivalSync::centerDetourPath(double sx, double sy, double tx, double ty,
+                                   vector<double>& px, vector<double>& py) const
+{
+  px.clear();
+  py.clear();
+  if(!m_enable_center_detour || (m_detour_radius <= 0) || (m_circle_rad <= 0))
+    return(false);
+
+  double cx = m_circle_x;
+  double cy = m_circle_y;
+
+  // Closest approach of the straight run to the ring centre.
+  double vx = tx - sx;
+  double vy = ty - sy;
+  double len2 = (vx*vx) + (vy*vy);
+  if(len2 < 1e-9)
+    return(false);
+  double t = (((cx-sx)*vx) + ((cy-sy)*vy)) / len2;
+  if(t < 0) t = 0;
+  if(t > 1) t = 1;
+  if(hypot(cx - (sx + t*vx), cy - (sy + t*vy)) >= m_detour_radius)
+    return(false);                     // already clears the disc: no detour
+
+  // Bearings of both endpoints from the ring centre. If either sits
+  // essentially ON the centre its bearing is meaningless, so bail out rather
+  // than emit a garbage route (the avoidance behaviour still covers us).
+  if((hypot(sx-cx, sy-cy) < 1e-3) || (hypot(tx-cx, ty-cy) < 1e-3))
+    return(false);
+
+  double th_s = atan2(sy-cy, sx-cx);
+  double th_t = atan2(ty-cy, tx-cx);
+
+  // CCW sweep from start bearing to target bearing, in [0, 2*PI).
+  double sweep = th_t - th_s;
+  while(sweep < 0)       sweep += 2*M_PI;
+  while(sweep >= 2*M_PI) sweep -= 2*M_PI;
+
+  double max_leg = m_detour_max_leg_deg * (M_PI / 180.0);
+  if(max_leg < 1e-3)
+    max_leg = M_PI / 4;
+  unsigned int legs = (unsigned int)(ceil(sweep / max_leg));
+  if(legs < 2)
+    legs = 2;                          // at least one intermediate waypoint
+
+  for(unsigned int i=1; i<legs; i++) {
+    double th = th_s + (sweep * i / legs);
+    px.push_back(cx + (m_detour_radius * cos(th)));
+    py.push_back(cy + (m_detour_radius * sin(th)));
+  }
+  return(!px.empty());
+}
+
+//---------------------------------------------------------
+// Procedure: remainingPath()
+//   How far boat v still has to travel to (tx,ty) ALONG THE ROUTE IT WAS
+//   GIVEN: via whichever center-detour waypoints are still ahead of it, then
+//   on to the target. The arrival sync equalises on this, not on the straight
+//   line -- a detoured boat has further to go than the crow flies, so if it
+//   were speed-matched on the straight line it would be given the pace for the
+//   short path, fly the long one, and land late. Feeding the true remaining
+//   length in instead makes the detoured boat the pace-setter and every other
+//   boat is slowed to match, so they still arrive together.
+//
+//   Waypoints retire as the boat reaches them (same capture distance the
+//   run-in uses), after which the remainder is the plain straight line.
+
+double ArrivalSync::remainingPath(const string& v, double tx, double ty)
+{
+  double nx = m_nav_x[v];
+  double ny = m_nav_y[v];
+
+  if(!m_path_x.count(v) || m_path_x[v].empty())
+    return(hypot(tx-nx, ty-ny));
+
+  vector<double>& px = m_path_x[v];
+  vector<double>& py = m_path_y[v];
+  unsigned int idx = m_path_idx.count(v) ? m_path_idx[v] : 0;
+
+  // Retire every waypoint already reached.
+  while((idx < px.size()) &&
+        (hypot(px[idx]-nx, py[idx]-ny) <= m_capture_dist))
+    idx++;
+  m_path_idx[v] = idx;
+
+  if(idx >= px.size())
+    return(hypot(tx-nx, ty-ny));
+
+  double total = hypot(px[idx]-nx, py[idx]-ny);
+  for(unsigned int k=idx; (k+1)<px.size(); k++)
+    total += hypot(px[k+1]-px[k], py[k+1]-py[k]);
+  total += hypot(tx-px[px.size()-1], ty-py[py.size()-1]);
+  return(total);
+}
+
+//---------------------------------------------------------
+// Procedure: transitSpec()
+//   The BHV_Waypoint update for sending boat v to (tx,ty): a plain "point="
+//   normally, or a two-point "points=" with a center-detour waypoint first
+//   when the direct run would cut across the ring centre. Needs the boat's
+//   live position, so with no node report yet it falls back to the direct run.
+
+string ArrivalSync::transitSpec(const string& v, double tx, double ty) const
+{
+  string target = doubleToStringX(tx,2) + "," + doubleToStringX(ty,2);
+
+  if(!m_have_nav.count(v) || !m_have_nav.find(v)->second)
+    return("point=" + target);
+
+  double sx = m_nav_x.find(v)->second;
+  double sy = m_nav_y.find(v)->second;
+
+  vector<double> px, py;
+  if(!centerDetourPath(sx, sy, tx, ty, px, py))
+    return("point=" + target);
+
+  string spec = "points=";
+  for(unsigned int i=0; i<px.size(); i++)
+    spec += doubleToStringX(px[i],2) + "," + doubleToStringX(py[i],2) + ":";
+  spec += target;
+  return(spec);
+}
+
+//---------------------------------------------------------
+// Procedure: postReturnPaths()
+//   On a fresh RETURN, push each boat its route home. Boats whose straight run
+//   home would cross the show vessel get a detour waypoint first. A boat with
+//   no configured home is left alone -- its waypt_return keeps the RETURN_POS
+//   baked in at launch, which is the safe fallback.
+
+void ArrivalSync::postReturnPaths()
+{
+  if(!m_enable_center_detour)
+    return;
+
+  for(unsigned int i=0; i<m_vehicles.size(); i++) {
+    string v = m_vehicles[i];
+    if(!m_home_x.count(v))
+      continue;
+    double hx = m_home_x[v];
+    double hy = m_home_y[v];
+    string spec = transitSpec(v, hx, hy);
+    Notify(m_return_update_var + "_" + toupper(v), spec);
+    m_detoured[v] = (spec.find("points=") == 0);
+  }
 }
 
 //---------------------------------------------------------
@@ -1564,6 +1771,37 @@ bool ArrivalSync::OnStartUp()
       if(!handled)
         reportConfigWarning("Bad vehicle line (need name, x, y): " + orig);
     }
+    else if(param == "enable_center_detour")
+      handled = setBooleanOnString(m_enable_center_detour, value);
+    else if(param == "detour_radius")
+      handled = setDoubleOnString(m_detour_radius, value);
+    else if(param == "detour_max_leg_deg")
+      handled = setDoubleOnString(m_detour_max_leg_deg, value);
+    else if(param == "return_update_var") {
+      m_return_update_var = value; handled = true;
+    }
+    else if(param == "homes") {
+      // "name,x,y:name,x,y:..." -- each boat's launch/return point, needed to
+      // plan the route home. One line for the whole field (same shape as the
+      // 'square' and 'region' params), because launch.sh injects it verbatim
+      // from the field files.
+      m_home_x.clear();
+      m_home_y.clear();
+      vector<string> ents = parseString(value, ':');
+      for(unsigned int k=0; k<ents.size(); k++) {
+        string ent = ents[k];
+        string nm = tolower(stripBlankEnds(biteStringX(ent, ',')));
+        string sx = stripBlankEnds(biteStringX(ent, ','));
+        string sy = stripBlankEnds(ent);
+        if(!nm.empty() && isNumber(sx) && isNumber(sy)) {
+          m_home_x[nm] = atof(sx.c_str());
+          m_home_y[nm] = atof(sy.c_str());
+        }
+      }
+      handled = !m_home_x.empty();
+      if(!handled)
+        reportConfigWarning("Bad homes line (need name,x,y:name,x,y:...): " + orig);
+    }
 
     if(!handled)
       reportUnhandledConfigWarning(orig);
@@ -1571,6 +1809,22 @@ bool ArrivalSync::OnStartUp()
 
   if(m_vehicles.empty() && !m_enable_dynamic_roster)
     reportConfigWarning("No vehicle configured: nothing to synchronize.");
+
+  // Center-detour sanity. The keep-out disc has to sit in the gap between the
+  // show-vessel avoidance envelope and the ring itself: too small and the
+  // detour still runs through the avoidance zone, too large and it puts the
+  // transiting boat out on top of the orbiting ones.
+  if(m_enable_center_detour) {
+    if(m_circle_rad <= 0)
+      reportConfigWarning("enable_center_detour needs the ring (circle_x/y/rad) configured.");
+    else if(m_detour_radius >= m_circle_rad)
+      reportConfigWarning("detour_radius (" + doubleToStringX(m_detour_radius,1) +
+                          ") should be well inside circle_rad (" +
+                          doubleToStringX(m_circle_rad,1) + ").");
+    if(m_home_x.empty())
+      reportConfigWarning("enable_center_detour: no 'homes' configured -- "
+                          "the RETURN leg will fall back to each boat's baked-in RETURN_POS.");
+  }
 
   registerVariables();
   return(true);
@@ -1611,6 +1865,15 @@ bool ArrivalSync::buildReport()
   m_msgs << "max_speed:      " << doubleToStringX(m_max_speed,2) << " m/s" << endl;
   m_msgs << "stagger_time:   " << doubleToStringX(m_stagger_time,1) << " s (farthest released first)" << endl;
   m_msgs << "elapsed:        " << doubleToStringX(elapsed,1) << " s since deploy" << endl;
+  if(m_enable_center_detour) {
+    unsigned int ndet = 0;
+    for(map<string,bool>::const_iterator q=m_detoured.begin(); q!=m_detoured.end(); q++)
+      if(q->second) ndet++;
+    m_msgs << "center-detour:  ON  (keep-out r"
+           << doubleToStringX(m_detour_radius,1) << " around the ring centre, "
+           << uintToString(m_home_x.size()) << " homes known) -- "
+           << uintToString(ndet) << " boat(s) routed around on the last transit" << endl;
+  }
   m_msgs << "common ETA (T): "
          << ((m_curr_T > 0) ? (doubleToStringX(m_curr_T,1) + " s")
                             : string("-  (nobody running in)")) << endl;

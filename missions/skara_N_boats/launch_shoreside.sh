@@ -16,6 +16,7 @@ IP_ADDR="localhost"
 MOOS_PORT="9000"
 PSHARE_PORT="9200"
 VNAMES=""
+HOMES=""
 
 #------------------------------------------------------------
 for ARGI; do
@@ -27,6 +28,7 @@ for ARGI; do
         echo "  --mport=<9000>     Shoreside MOOSDB port"
         echo "  --pshare=<9200>    Shoreside pShare port"
         echo "  --vnames=<a:b:c>   Colon-separated vehicle names"
+        echo "  --homes=<n,x,y:..> Colon-separated per-boat home points"
         exit 0
     elif [ "${ARGI//[^0-9]/}" = "$ARGI" -a "$TIME_WARP" = 1 ]; then
         TIME_WARP=$ARGI
@@ -44,6 +46,8 @@ for ARGI; do
         PSHARE_PORT="${ARGI#--pshare=*}"
     elif [ "${ARGI:0:9}" = "--vnames=" ]; then
         VNAMES="${ARGI#--vnames=*}"
+    elif [ "${ARGI:0:8}" = "--homes=" ]; then
+        HOMES="${ARGI#--homes=*}"
     else
         echo "$ME: Bad Arg:[$ARGI]. Exit Code 1."
         exit 1
@@ -58,7 +62,7 @@ fi
 
 nsplug meta_shoreside.moos targ_shoreside.moos $NSFLAGS WARP=$TIME_WARP \
        IP_ADDR=$IP_ADDR         MOOS_PORT=$MOOS_PORT    \
-       PSHARE_PORT=$PSHARE_PORT VNAMES=$VNAMES
+       PSHARE_PORT=$PSHARE_PORT VNAMES=$VNAMES  HOMES=$HOMES
 
 if [ "${JUST_MAKE}" = "yes" ]; then
     echo "$ME: shoreside targ file made."

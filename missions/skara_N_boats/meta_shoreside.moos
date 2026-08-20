@@ -120,7 +120,7 @@ ProcessConfig = pArrivalSync
   // polygons (meta_vehicle.bhv) derive from the ring + MIO. MUST match the
   // CIRCLE_X/Y/RAD drawn in launch_vehicle.sh.
   enable_orbit_lock = true
-  circle_x    = 85        // ring center (85,-50), r33 -- central Skaramangas basin
+  circle_x    = 55        // ring center (55,-50), r33 -- central Skaramangas basin
   circle_y    = -50
   circle_rad  = 33
   orbit_speed = 1.61      // pireas 1.4 x1.15
@@ -129,13 +129,16 @@ ProcessConfig = pArrivalSync
   orbit_max   = 2.82      // pireas 2.45 x1.15 (re-spacing catch-up headroom)
   orbit_var   = ENCIRCLE_UPDATE
 
-  // DISPERSE / ASSEMBLE square formation. Axis-aligned square centred on the
-  // ring (85,-50), half-side 37.95 (= 1.15 * ring_radius 33), so it CONTAINS
-  // the r=33 ring and its corners sit outside the ring for the outward
-  // disperse. All four corners sit in open water inside the op-region. On
-  // DISPERSE each boat takes its nearest corner (cyclic order so no two cross).
+  // DISPERSE / ASSEMBLE square formation. Square centred on the ring
+  // (55,-50), half-side 37.95 (= 1.15 * ring_radius 33), ROTATED 45 deg so the
+  // four corners now lie due N / W / S / E of the ring center at the square's
+  // circumradius 53.67 (= 37.95 * sqrt(2)) instead of on the diagonals.
+  // It still CONTAINS the r=33 ring and its corners sit outside the ring for
+  // the outward disperse. Corner order stays CCW (N,W,S,E) so the forward-bias
+  // + cyclicAssign non-crossing assignment behave as before. On DISPERSE each
+  // boat takes its nearest corner and holds a square_radius circle on it.
   enable_disperse   = true
-  square            = 122.95,-12.05:47.05,-12.05:47.05,-87.95:122.95,-87.95
+  square            = 55,3.67:1.33,-50:55,-103.67:108.67,-50
   square_radius     = 8        // turn-radius floor; NOT scaled with the formation
   disperse_speed    = 1.61     // pireas 1.4 x1.15
   disperse_cmd_var  = DISPERSE_CMD
@@ -166,15 +169,61 @@ ProcessConfig = pArrivalSync
   // MIO station. On the MIO button the closest boat leaves the ring, holds an
   // r=mio_radius loiter around this fixed point, and the other boat keeps
   // orbiting alone; END MIO recalls it and the two re-form 180 deg apart.
-  // MIO station: local (175,-75), ~93 m E of the ring center in open water.
+  // MIO station: local (25,-100), ~58 m SSW of the ring center in open water,
+  // clear of the r33 ring (25 m outside it) and outside the DISPERSE square.
   // The 4.4 m no-go at the centre is a static obstacle in meta_vehicle.bhv
   // (mio_nogo, centred here -- keep the two in sync).
   enable_mio  = true
-  mio_x       = 175
-  mio_y       = -75
+  mio_x       = 25
+  mio_y       = -100
   mio_radius  = 7.7      // pireas 7 x1.1 (guard loiter around the station object)
   mio_speed   = 1.61     // pireas 1.4 x1.15
   mio_cmd_var = MIO_CMD
+
+  //---------------------------------------------------------------
+  // CENTER DETOUR (opt-in; default off, so pireas_N_boat and the other
+  // missions sharing pArrivalSync are unaffected).
+  //
+  // The boats ring the show vessel but all launch from the one south beach,
+  // so a boat slotted on the far (north) side would run straight across the
+  // middle -- through the parked vessel -- both on the way out and on the way
+  // home. With this on, any transit whose straight line would pass within
+  // detour_radius of the ring centre is re-routed around it, on an arc of
+  // waypoints walked COUNTER-CLOCKWISE (the same sense as the orbit) so that
+  // boats transiting at the same time follow one another instead of picking
+  // opposite sides and meeting head-on.
+  //
+  // detour_radius must sit in the gap between the show_vessel avoidance
+  // envelope and the ring: the envelope reaches 22.0 m from the centre (11 m
+  // octagon + pwt_outer_dist 11) and the ring is at 33. 26 leaves 4 m outside
+  // the envelope and 7 m inside the orbit.
+  //
+  // detour_max_leg_deg caps how much arc a single straight leg may span. This
+  // matters: the boat flies straight lines between waypoints, so a long chord
+  // across the keep-out circle sags back INSIDE it. One waypoint on the far
+  // side is not enough -- measured, it sagged to 20.0 m (N=4) and 14.7 m
+  // (N=5), i.e. back inside the envelope. At 45 deg the worst measured
+  // clearance over every home/slot pair is 24.05 m (N=4) / 24.30 m (N=5),
+  // clearing both the 11 m obstacle and the 22 m envelope. Cost is a 4-13%
+  // longer run-in (up to +44% for the far slot at N=5).
+  //
+  // NOTE: the run-in stays SYNCHRONISED. pArrivalSync measures each boat's
+  // REMAINING PATH LENGTH via whichever detour waypoints are still ahead of
+  // it, so the detoured boat becomes the pace-setter (it runs at max_speed)
+  // and every other boat is slowed to the same common arrival time. The
+  // farthest-first release stagger uses the same path length. Verified: all
+  // boats land together, with the slowest at 1.09 m/s -- still above min_speed.
+  enable_center_detour = true
+  detour_radius        = 26
+  detour_max_leg_deg   = 45
+
+  // Per-boat home / return points, for planning the route home. Injected by
+  // launch.sh from vnames.txt + vpositions.txt -- the SAME files that give
+  // launch_vehicle.sh its RETURN_POS -- so the shoreside can never drift from
+  // what the boats actually use. Format: name,x,y:name,x,y:...
+#ifdef HOMES
+  homes = $(HOMES)
+#endif
 
   // Dynamic roster (skara_N_boats): no fixed 'vehicle=' slots. On each fresh
   // DEPLOY, pArrivalSync snapshots which pool boats are connected (a node

@@ -72,6 +72,20 @@ VAMT=${#VNAMES[@]}
 
 CSV_VNAMES=$(IFS=:; echo "${VNAMES[*]}")
 
+# Homes for pArrivalSync's center-detour (route home planning). Built from the
+# SAME vnames.txt/vpositions.txt that init_field.sh just wrote and that
+# launch_vehicle.sh uses for RETURN_POS, so there is one source of truth and
+# the shoreside can never drift from the boats. Format: "name,x,y:name,x,y:..."
+CSV_HOMES=""
+for ((i=0; i<VAMT; i++)); do
+    HX=$(echo "${VEHPOS[$i]}" | sed -n 's/.*x=\([-0-9.]*\).*/\1/p')
+    HY=$(echo "${VEHPOS[$i]}" | sed -n 's/.*y=\([-0-9.]*\).*/\1/p')
+    if [ "$HX" != "" -a "$HY" != "" ]; then
+        if [ "$CSV_HOMES" != "" ]; then CSV_HOMES="$CSV_HOMES:"; fi
+        CSV_HOMES="$CSV_HOMES${VNAMES[$i]},$HX,$HY"
+    fi
+done
+
 #------------------------------------------------------------
 #  Part 2: Launch the shoreside.
 #------------------------------------------------------------
@@ -79,7 +93,7 @@ vecho "Launching shoreside (vnames=$CSV_VNAMES)"
 IPARG=""
 if [ "${IP_ADDR}" != "" ]; then IPARG="--ip=$IP_ADDR"; fi
 ./launch_shoreside.sh --auto --mport=9000 --pshare=9200 $IPARG \
-    --vnames=$CSV_VNAMES $JUST_MAKE $VERBOSE $TIME_WARP
+    --vnames=$CSV_VNAMES --homes=$CSV_HOMES $JUST_MAKE $VERBOSE $TIME_WARP
 
 #------------------------------------------------------------
 #  Part 3: Launch the vehicles.

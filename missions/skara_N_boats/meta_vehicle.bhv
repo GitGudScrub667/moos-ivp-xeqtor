@@ -221,10 +221,17 @@ Behavior = BHV_OpRegionV24
   pwt       = 300
   condition = DEPLOY = true
 
-  // Skaramangas op-region (drawn on the skara chart). Contains the ring (85,-50
-  // r33), DISPERSE square, MIO station (175,-75) and all home run-in paths,
+  // Skaramangas op-region (drawn on the skara chart). Contains the ring (55,-50
+  // r33), DISPERSE square, MIO station (25,-100) and all home run-in paths,
   // with margin for save_dist/halt_dist below. All edges in open water.
-  core_poly = pts={-5,-15: 70,25: 190,12: 230,-70: 150,-155: 10,-168}
+  // The WEST vertex (-25,-50) was added when the ring moved to x=55 and the
+  // DISPERSE square was rotated 45 deg: that put a square corner at (1.33,-50)
+  // whose square_radius=8 loiter circle overhung the old -5,-15 -> 10,-168 edge
+  // by ~5 m. The new vertex bulges the west side out and restores ~15 m of
+  // spare. Real-world clearance on this edge confirmed by the user.
+  // NOTE: must stay CONVEX -- BHV_OpRegionV24 requires it whenever save_dist /
+  // halt_dist are set (BHV_OpRegionV24.cpp:485), and both are set below.
+  core_poly = pts={-5,-15: 70,25: 190,12: 230,-70: 150,-155: 10,-168: -25,-50}
 
   save_dist   = 3
   halt_dist   = 15
@@ -245,12 +252,12 @@ Behavior = BHV_OpRegionV24
 
 //----------------------------------------------
 // 7. SHOW-VESSEL no-go zone. During the show a sizeable vessel PARKS at
-//    the centre of the encircle ring (85,-50). Modelled as a 9 m radius
+//    the centre of the encircle ring (55,-50). Modelled as an 11 m radius
 //    octagon obstacle so our boats are NEVER at risk of hitting it.
-//    The clean orbit sits 24 m off this zone (ring R=33 minus 9 m), well
-//    outside pwt_outer_dist (9), so it does NOT perturb normal encircling;
+//    The clean orbit sits 22 m off this zone (ring R=33 minus 11 m), well
+//    outside pwt_outer_dist (11), so it does NOT perturb normal encircling;
 //    it only fires when a path cuts toward the centre.
-//    NOTE: the 8 points are hardcoded for centre (85,-50); recompute them
+//    NOTE: the 8 points are hardcoded for centre (55,-50); recompute them
 //    if the ring center changes (nsplug can't do the octagon arithmetic
 //    from $(CIRCLE_*)).
 Behavior = BHV_AvoidObstacleV24
@@ -263,21 +270,33 @@ Behavior = BHV_AvoidObstacleV24
   condition  = MODE == ACTIVE
   perpetual  = true
 
-  // 9 m octagon centred on the RING center (85,-50) -- the parked show vessel.
-  polygon    = pts={94,-50:91.36,-43.64:85,-41:78.64,-43.64:76,-50:78.64,-56.36:85,-59:91.36,-56.36}, label=show_vessel
+  // 11 m octagon centred on the RING center (55,-50) -- the parked show vessel.
+  // (grown from 9 m on 2026-08-20; the envelope distances below are UNCHANGED --
+  //  they are edge-relative, so the whole envelope simply moves out 2 m with it.)
+  polygon    = pts={66,-50:62.78,-42.22:55,-39:47.22,-42.22:44,-50:47.22,-57.78:55,-61:62.78,-57.78}, label=show_vessel
 
   allowable_ttc     = 20
-  pwt_outer_dist    = 9
+  pwt_outer_dist    = 11     // raised from 9 (2026-08-20): earlier, gentler
+                             // deflection for any transit aimed at the centre.
+                             // Envelope now 21.2-22.0 m from the ring centre
+                             // (11 m polygon + 11), still 11 m clear of the
+                             // r33 orbit, so it does NOT perturb encircling.
+                             // Do NOT exceed 22 -- at 11+22=33 it would sit on
+                             // the orbit and fight the encircle behaviour.
   pwt_inner_dist    = 7
   completed_dist    = 500
   min_util_cpa_dist = 5
-  max_util_cpa_dist = 9
+  max_util_cpa_dist = 9      // deliberately left at 9 (< pwt_outer_dist): only
+                             // constrained to be >= min_util_cpa_dist
+                             // (ObShipModel.cpp:292), so the utility grading
+                             // saturates at a 9 m CPA while the priority ramp
+                             // now extends out to 11 m.
   use_refinery      = true
 }
 
 //----------------------------------------------
 // 8. MIO STATION no-go. A 4.4 m object sits at the centre of the MIO loiter
-//    station (175,-75); the guarding boat circles it at r=7.7 (see the
+//    station (25,-100); the guarding boat circles it at r=7.7 (see the
 //    mio_loiter behaviour, section 2c). Active ONLY during MIO
 //    (MODE==MIO_STATION): the object is only there while a boat is guarding the
 //    station, so it does NOT need avoiding the rest of the time -- and gating
@@ -299,8 +318,8 @@ Behavior = BHV_AvoidObstacleV24
                                      // station, so avoid it only then.
   perpetual  = true
 
-  // 4.4 m octagon centred on the MIO station (175,-75). Keep synced with mio_x/mio_y.
-  polygon    = pts={179.4,-75:178.11,-71.89:175,-70.6:171.89,-71.89:170.6,-75:171.89,-78.11:175,-79.4:178.11,-78.11}, label=mio_nogo
+  // 4.4 m octagon centred on the MIO station (25,-100). Keep synced with mio_x/mio_y.
+  polygon    = pts={29.4,-100:28.11,-96.89:25,-95.6:21.89,-96.89:20.6,-100:21.89,-103.11:25,-104.4:28.11,-103.11}, label=mio_nogo
 
   allowable_ttc     = 20
   pwt_outer_dist    = 2

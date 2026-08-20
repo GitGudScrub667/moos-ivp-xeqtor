@@ -9,7 +9,7 @@
 ===========================================================================
 
  #########################################################################
- ##  GEOMETRY PLACED (ring 85,-50 r33 / MIO 175,-75 / op-area drawn),    ##
+ ##  GEOMETRY PLACED (ring 55,-50 r33 / MIO 25,-100 / op-area drawn),    ##
  ##  but NOT YET VALIDATED. Sim-check the full mission, then water-test  ##
  ##  at Skaramangas, before running it for the show. Still to fine-tune: ##
  ##  pMarineViewer pan/zoom (GUI). See GEOMETRY_TODO.md.                 ##

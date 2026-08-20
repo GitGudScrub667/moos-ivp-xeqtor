@@ -38,7 +38,7 @@ FSEAT_IP=""
 
 # The common ring (same for every boat), drawn on the viewer. MUST MATCH the
 # shoreside pArrivalSync circle_x/y/rad exactly -- update in lockstep.
-CIRCLE_X="85"
+CIRCLE_X="55"
 CIRCLE_Y="-50"
 CIRCLE_RAD="33"
 
