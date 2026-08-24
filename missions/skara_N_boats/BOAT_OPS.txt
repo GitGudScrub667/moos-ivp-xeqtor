@@ -76,10 +76,14 @@
 
    Read-only: it changes nothing, builds nothing, pulls nothing, launches
    nothing, and needs NO internet. Works at the dock. It checks the repo pins,
-   the apps on PATH, the mission field files, this boat's identity, and the
-   front-seat + shoreside links, then prints either PREFLIGHT CLEAN or a list
-   of CHECK>> lines. Everything it tests is spelled out below in 2b-2d, so you
-   can still do it by hand if the script is unavailable.
+   the apps on PATH, whether any binary is older than its own source (i.e.
+   pulled but never rebuilt), the mission field files, this boat's identity,
+   and the front-seat + shoreside links, then prints either PREFLIGHT CLEAN or
+   a list of CHECK>> lines. Everything it tests is spelled out below in 2b-2d,
+   so you can still do it by hand if the script is unavailable.
+
+   On the LAPTOP, check the shoreside instead -- same pins, shoreside apps,
+   no boat identity:   ./preflight.sh --shoreside
 
  --- 2b. Environment + code (once per boat per day) ---
 

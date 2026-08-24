@@ -6,6 +6,8 @@
 #
 #  Run it on EACH Pablo before launching that boat:
 #      ./preflight.sh --shore=<LAPTOP_IP>
+#  On the laptop, to check the shoreside instead:
+#      ./preflight.sh --shoreside
 #
 #  It answers four questions:
 #    1. Is this machine on the same code as the show build?  (repo pins)
@@ -30,12 +32,18 @@ EXP_XEQTOR_BRANCH="main"
 
 SHORE_IP=""
 PROBLEMS=0
+MODE="boat"        # boat | shore
 
 for ARGI; do
     if [ "${ARGI}" = "--help" -o "${ARGI}" = "-h" ]; then
-        echo "preflight.sh [--shore=<LAPTOP_IP>]"
-        echo "  Read-only boat-side preflight. Changes nothing."
+        echo "preflight.sh [--shore=<LAPTOP_IP>] [--shoreside]"
+        echo "  Read-only preflight. Changes nothing."
+        echo "  --shore=<ip>  the laptop's IP, so this boat can ping it"
+        echo "  --shoreside   check THIS machine as the shoreside laptop"
+        echo "                (skips the boat-only apps and identity)"
         exit 0
+    elif [ "${ARGI}" = "--shoreside" ]; then
+        MODE="shore"
     elif [ "${ARGI:0:8}" = "--shore=" ]; then
         SHORE_IP="${ARGI#--shore=*}"
     else
@@ -49,7 +57,8 @@ flag()  { echo "  CHECK>> $1"; PROBLEMS=$((PROBLEMS+1)); }
 head_() { echo; echo "-- $1 ------------------------------------------------"; }
 
 echo "==========================================================="
-echo " skara_N_boats PREFLIGHT   ($(hostname))   $(date '+%Y-%m-%d %H:%M')"
+if [ "$MODE" = "shore" ]; then WHAT="SHORESIDE"; else WHAT="BOAT"; fi
+echo " skara_N_boats PREFLIGHT [$WHAT]   ($(hostname))   $(date '+%Y-%m-%d %H:%M')"
 echo "==========================================================="
 
 #------------------------------------------------------------
@@ -95,10 +104,15 @@ check_repo "$HOME/moos-ivp-xeqtor" "$EXP_XEQTOR_BRANCH" ""                "moos-
 #------------------------------------------------------------
 head_ "2. APPS ON PATH"
 #------------------------------------------------------------
-for app in nsplug uMAC pAntler MOOSDB pHelmIvP pNodeReporter pMarinePIDV22 \
-           pContactMgrV20 pShare pHostInfo uFldNodeBroker uProcessWatch \
-           iBackSeatBroker pBB_DGPS_EKF pBB_Health pThrustMix pDeadManPost \
-           get_robot_info_greece.sh ; do
+APPS="nsplug uMAC pAntler MOOSDB pShare pHostInfo uProcessWatch pRealm pLogger"
+if [ "$MODE" = "shore" ]; then
+    APPS="$APPS pMarineViewer pArrivalSync uFldShoreBroker uFldNodeComms uTimerScript"
+else
+    APPS="$APPS pHelmIvP pNodeReporter pMarinePIDV22 pContactMgrV20 uFldNodeBroker"
+    APPS="$APPS iBackSeatBroker pBB_DGPS_EKF pBB_Health pThrustMix pDeadManPost"
+    APPS="$APPS get_robot_info_greece.sh"
+fi
+for app in $APPS ; do
     if command -v "$app" >/dev/null 2>&1; then
         ok "$app"
     else
@@ -107,7 +121,55 @@ for app in nsplug uMAC pAntler MOOSDB pHelmIvP pNodeReporter pMarinePIDV22 \
 done
 
 #------------------------------------------------------------
-head_ "3. MISSION FIELD FILES"
+head_ "3. BUILD FRESHNESS (were the binaries built from the checked-out code?)"
+#------------------------------------------------------------
+# Classic make-style staleness: is any SOURCE FILE newer than the binary
+# built from it? That catches the case that matters -- "pulled but never
+# rebuilt" -- because a pull rewrites the source files' timestamps.
+# Deliberately NOT compared against commit dates: the normal edit -> build ->
+# test -> commit order leaves the binary older than its own commit, which
+# would flag every healthy machine.
+# Limits: it cannot detect a checkout of OLDER code that was never rebuilt,
+# and a fresh clone restamps every source file. Clean here means "nothing
+# obviously stale", not "provably in sync".
+check_fresh() {
+    # args: <label> then one or more "binary|source-dir"
+    local label="$1"; shift
+    local pair bin src newer found=0
+    for pair in "$@"; do
+        bin="${pair%%|*}"
+        src="${pair#*|}"
+        [ -f "$bin" ] || continue
+        [ -d "$src" ] || continue
+        found=1
+        newer=$(find "$src" -type f -newer "$bin" -print -quit 2>/dev/null)
+        if [ -n "$newer" ]; then
+            flag "$label: $(basename "$bin") is OLDER than its source"
+            echo "            e.g. $newer"
+            echo "            -> that repo was updated and never rebuilt (./build.sh)"
+        else
+            ok "$label: $(basename "$bin") newer than its source"
+        fi
+    done
+    [ $found -eq 0 ] && echo "  info    $label: no binaries found to date-check"
+    return 0
+}
+check_fresh "moos-ivp" \
+    "$HOME/moos-ivp/bin/pHelmIvP|$HOME/moos-ivp/ivp/src" \
+    "$HOME/moos-ivp/bin/pMarineViewer|$HOME/moos-ivp/ivp/src"
+if [ "$MODE" = "shore" ]; then
+    check_fresh "moos-ivp-xeqtor" \
+        "$HOME/moos-ivp-xeqtor/bin/pArrivalSync|$HOME/moos-ivp-xeqtor/src/pArrivalSync"
+else
+    check_fresh "moos-ivp-greece" \
+        "$HOME/moos-ivp-greece/bin/pBB_DGPS_EKF|$HOME/moos-ivp-greece/src/pBB_DGPS_EKF" \
+        "$HOME/moos-ivp-greece/bin/iBackSeatBroker|$HOME/moos-ivp-greece/src/iBackSeatBroker" \
+        "$HOME/moos-ivp-greece/bin/pThrustMix|$HOME/moos-ivp-greece/src/pThrustMix" \
+        "$HOME/moos-ivp-greece/bin/pBB_Health|$HOME/moos-ivp-greece/src/pBB_Health"
+fi
+
+#------------------------------------------------------------
+head_ "4. MISSION FIELD FILES"
 #------------------------------------------------------------
 # Work against the real mission dir. This script is also kept as a loose copy
 # on the Desktop, so if it is not sitting in the mission itself, go find it.
@@ -132,10 +194,15 @@ else
 fi
 
 #------------------------------------------------------------
-head_ "4. IDENTITY (who does this boat think it is?)"
+head_ "5. IDENTITY (who does this boat think it is?)"
 #------------------------------------------------------------
 echo "  hostname -I: $(hostname -I)"
-if ! command -v get_robot_info_greece.sh >/dev/null 2>&1; then
+if [ "$MODE" = "shore" ]; then
+    echo "  info    shoreside mode: no boat identity to detect."
+    echo "          Give the boats the field-subnet address from the line above:"
+    echo "            ./launch.sh --shoreside --ip=<that IP> 1"
+    VNAME=""; FSEAT=""
+elif ! command -v get_robot_info_greece.sh >/dev/null 2>&1; then
     flag "get_robot_info_greece.sh not on PATH -- cannot determine identity"
     VNAME=""; FSEAT=""
 else
@@ -161,7 +228,7 @@ else
 fi
 
 #------------------------------------------------------------
-head_ "5. LINKS"
+head_ "6. LINKS"
 #------------------------------------------------------------
 ping_check() {
     local ip="$1" what="$2"
@@ -172,7 +239,9 @@ ping_check() {
         flag "$what $ip NOT reachable"
     fi
 }
-if [ "$FSEAT" = "" ]; then
+if [ "$MODE" = "shore" ]; then
+    echo "  info    shoreside mode: boats ping THIS machine, not the reverse."
+elif [ "$FSEAT" = "" ]; then
     echo "  info    front seat unknown (identity not detected)"
 else
     ping_check "$FSEAT" "front seat"
@@ -189,13 +258,24 @@ fi
 echo
 echo "==========================================================="
 if [ $PROBLEMS -eq 0 ]; then
-    echo " PREFLIGHT CLEAN.  Launch with:"
-    echo "   ./launch_vehicle.sh --shore=${SHORE_IP:-<LAPTOP_IP>} -v 1"
+    if [ "$MODE" = "shore" ]; then
+        echo " PREFLIGHT CLEAN [SHORESIDE].  Launch with:"
+        echo "   ./launch.sh --shoreside --ip=<LAPTOP_IP> 1"
+    else
+        echo " PREFLIGHT CLEAN [BOAT].  Launch with:"
+        echo "   ./launch_vehicle.sh --shore=${SHORE_IP:-<LAPTOP_IP>} -v 1"
+    fi
 else
     echo " PREFLIGHT: $PROBLEMS item(s) marked CHECK>> above."
-    echo " (Running this on the LAPTOP? The BlueBoat-only apps and the identity"
-    echo "  check flag there by design -- this script is meant for a Pablo.)"
-    echo " See BOAT_OPS.txt section 5 before launching this boat."
+    if [ "$MODE" = "boat" ]; then
+        echo " (On the LAPTOP? The BlueBoat-only apps and the identity check flag"
+        echo "  there by design -- use --shoreside to check the laptop instead.)"
+    fi
+    if [ "$MODE" = "shore" ]; then
+        echo " See FIELD_OPS.txt before launching the shoreside."
+    else
+        echo " See BOAT_OPS.txt section 5 before launching this boat."
+    fi
 fi
 echo "==========================================================="
 [ $PROBLEMS -eq 0 ]
