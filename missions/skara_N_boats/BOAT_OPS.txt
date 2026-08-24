@@ -1,0 +1,249 @@
+===========================================================================
+ SKARA_N_BOATS — BOAT-SIDE RUNBOOK  (what you do ON EACH PABLO)
+ This file covers the BOAT machines ONLY. The laptop/shoreside side is in
+ FIELD_OPS.txt. Pool of 5: asha bama chip flex ewan. Bring any 1-4.
+ Mission dir on every machine: ~/moos-ivp-xeqtor/missions/skara_N_boats
+===========================================================================
+
+  RULE #1:  REAL BOATS ALWAYS RUN AT WARP 1. The trailing "1" on the launch
+            command is the time warp. Never pass anything else.
+  RULE #2:  NEVER pass --sim on a real boat. A real boat takes NO identity
+            flags at all -- it works out who it is by itself (section 1).
+  RULE #3:  Keep the physical kill switch / RC in reach. Every no-go zone in
+            this mission is a SOFT IvP preference, not a hard limit.
+
+  You need, per boat: the boat's Pablo (backseat) reachable, its front seat
+  up, and the laptop's field-subnet IP, written here once:
+
+        LAPTOP_IP  =  ______________     (laptop: hostname -I )
+
+
+===========================================================================
+ 0.  IF YOU ARE WORKING OVER SSH  — READ THIS FIRST
+===========================================================================
+ The Pablos are at  10.<N>.1.100 :   asha 10.31   bama 10.32   chip 10.33
+                                     ewan 10.35   flex 10.36
+ (10.34.1.100 is "dale" and is NOT in this mission's pool -- see section 1.)
+
+   ssh <your-user>@10.31.1.100          # asha, etc.
+
+ >> RUN THE LAUNCH INSIDE tmux (or screen). <<
+    If you launch a boat straight from an ssh session and that link drops,
+    the boat's whole MOOS community is killed mid-run. Do:
+
+        tmux new -s boat        # then run the launch inside it
+        (detach with Ctrl-B then D;  re-attach later with: tmux attach -t boat)
+
+    Do NOT assume a dead backseat means a stopped boat -- the front seat's
+    behaviour on loss of backseat commands is its own business. Kill switch.
+
+
+===========================================================================
+ 1.  IDENTITY — the single most important thing on a boat machine
+===========================================================================
+ The boat identifies ITSELF. launch_vehicle.sh asks get_robot_info_greece.sh,
+ which reads the FIRST address of `hostname -I` and maps it:
+
+     10.31.1.100 -> asha   front seat 10.31.1.1    (pool: YES)
+     10.32.1.100 -> bama   front seat 10.32.1.1    (pool: YES)
+     10.33.1.100 -> chip   front seat 10.33.1.1    (pool: YES)
+     10.34.1.100 -> dale   front seat 10.34.1.1    (pool: NO  <-- see below)
+     10.35.1.100 -> ewan   front seat 10.35.1.1    (pool: YES)
+     10.36.1.100 -> flex   front seat 10.36.1.1    (pool: YES)
+
+ >> "dale" is a real boat but is NOT in this mission's 5-boat pool. Launching
+    on the 10.34 Pablo gives "not listed in vnames.txt. Exit Code 5". That is
+    correct behaviour, not a bug. Use one of the five.
+
+ >> It MUST be the _greece script. The generic get_robot_info.sh answers with
+    yip/zoe/xai and will also give you Exit Code 5. Check which one you have:
+
+        which get_robot_info_greece.sh        # must print a path
+
+ >> `hostname -I` prints EVERY address. The 10.3N.1.100 one must be FIRST. If
+    a wifi/AP/docker address sorts ahead of it, identity detection fails.
+
+
+===========================================================================
+ 2.  PREFLIGHT ON EACH PABLO  (do this on every boat you are bringing)
+===========================================================================
+ --- 2a. Environment + code (once per boat per day) ---
+
+   source ~/.bashrc
+   which nsplug uMAC pHelmIvP get_robot_info_greece.sh
+   which iBackSeatBroker pBB_DGPS_EKF pThrustMix pBB_Health pDeadManPost
+        # ALL of the above must print a path. The pBB_*/iBackSeatBroker apps
+        # come from moos-ivp-greece; pHelmIvP etc. from core moos-ivp.
+
+   cd ~/moos-ivp-xeqtor
+   git status                     # expect: On branch main, clean
+   git pull
+   ./build.sh                     # keeps the repo consistent; the mission
+                                  # itself uses only STOCK behaviours, so no
+                                  # custom behaviour library is needed here.
+
+   >> Core ~/moos-ivp must stay STOCK. Do not apply any patch to it. If an
+      old note tells you to patch a viewer/ContactLedger fix: IGNORE IT.
+
+ --- 2b. Mission field files (REQUIRED on every boot / fresh clone) ---
+
+   cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+   ./init_field.sh
+        # writes vnames.txt vpositions.txt vcolors.txt vslotpos.txt.
+        # These are generated and deliberately NOT in git, so a fresh clone
+        # does not have them. Skipping this => "field files missing. Exit 4".
+
+ --- 2c. Identity + links ---
+
+   get_robot_info_greece.sh --name     # -> asha|bama|chip|flex|ewan  (exact)
+   get_robot_info_greece.sh --TYPE     # -> BBOAT     (uppercase TYPE!)
+   get_robot_info_greece.sh --ip       # -> 10.3N.1.100, never "localhost"
+   get_robot_info_greece.sh --fseat    # -> 10.3N.1.1
+
+   ping -c3 $(get_robot_info_greece.sh --fseat)    # front seat must answer
+   ping -c3 <LAPTOP_IP>                            # shoreside must answer
+
+   >> Front seat unreachable = this boat cannot move, no matter how healthy
+      the backseat looks. RC working and the boat's wifi AP being up do NOT
+      prove the front seat / mesh link is up. Fix it before launching.
+
+
+===========================================================================
+ 3.  LAUNCH THE BOAT
+===========================================================================
+ Shoreside first: the laptop must already be running
+     ./launch.sh --shoreside --ip=<LAPTOP_IP> 1
+ (Boats may be launched before or after it -- they keep retrying -- but they
+  only show up on the viewer once the shoreside is up.)
+
+ On the Pablo, inside tmux, in the mission dir:
+
+     cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+     ./launch_vehicle.sh --shore=<LAPTOP_IP> -v 1
+
+     ^ that is the WHOLE command. Same on every boat.
+       -v just echoes the resolved identity first -- recommended, read it:
+
+           =========== launch_vehicle.sh : asha ===========
+           XMODE=BBOAT  FSEAT_IP=10.31.1.1  IP_ADDR=10.31.1.100
+           RETURN_POS=x=47,y=-150            RING = (55,-50) r=33
+
+       Check VNAME is the boat in front of you and XMODE=BBOAT.
+       If XMODE says SIM, STOP -- you are not driving the hardware.
+
+ Flags you must NOT use here: --sim/-s (forces a fake boat), --vname,
+ --start_pos, --slotpos (identity and home come from the boat + init_field.sh;
+ the ring slot is pushed live by the shoreside at DEPLOY anyway).
+
+ A uMAC console then takes over the terminal. Leave it. That terminal IS the
+ boat: Ctrl-C there shuts the boat's community down.
+
+
+===========================================================================
+ 4.  WHAT "GOOD" LOOKS LIKE
+===========================================================================
+ On the Pablo (second terminal / second tmux pane):
+
+   ps -e -o comm= | grep -E "MOOSDB|pHelmIvP|iBackSeatBroker|pBB_DGPS_EKF|pThrustMix|pBB_Health|pDeadManPost"
+
+   Expect all 7. Plus pShare pHostInfo pNodeReporter uFldNodeBroker
+   pContactMgrV20 pMarinePIDV22 uProcessWatch pRealm pLogger.
+
+   >> If uSimMarineV22 is running, this boat launched as a SIMULATION.
+      Ctrl-C and relaunch without --sim.
+
+ On the shoreside viewer (ask whoever is on the laptop):
+   [ ] the boat's name appears within a few seconds of launch
+   [ ] its plotted position matches where it physically floats
+   [ ] uProcessWatch for that node reports all-present, no run warnings
+
+ >> The whole point: EVERY boat you intend to run must be on the viewer
+    BEFORE the laptop presses DEPLOY. The formation roster is snapshotted at
+    that instant. A boat that connects later is simply left out until the
+    next RETURN -> DEPLOY cycle.
+
+ Icon jitter on the viewer is a known, cosmetic, viewer-only issue. Ignore it.
+
+
+===========================================================================
+ 5.  FAILURES — exact message, exact fix
+===========================================================================
+ "Bad Arg:[...]. Exit Code 1"
+        Typo in a flag. Only --shore=, -v and the trailing 1 belong here.
+
+ "Problem getting robot info. Exit Code 2"
+        get_robot_info_greece.sh gave nothing / "localhost".
+        -> hostname -I : is 10.3N.1.100 present, and FIRST?
+        -> which get_robot_info_greece.sh : on PATH? (source ~/.bashrc)
+
+ "field files missing -- run ./init_field.sh. Exit Code 4"
+        -> ./init_field.sh in the mission dir. Every boot, every fresh clone.
+
+ "'<name>' is not listed in vnames.txt. Exit Code 5"
+        The detected name is not one of asha/bama/chip/flex/ewan.
+        -> classic cause: it is "dale" (10.34), or you have the generic
+           get_robot_info.sh on PATH answering yip/zoe/xai.
+
+ nsplug stops and asks whether to continue
+        An undefined macro in the meta files. Answer NO / Ctrl-C. Do not
+        launch a half-built config. Re-run git pull; if it persists, that is
+        a real mission-file bug -- note the macro name and stop.
+
+ Boat launched fine but NEVER appears on the viewer
+        -> wrong --shore=<LAPTOP_IP> (laptop: hostname -I, field subnet one)
+        -> ping the laptop from the Pablo; if that fails it is the network,
+           not the mission. Check the boat's radio link on the fleet
+           dashboard (http://10.1.0.10).
+
+ Boat appears, then un-deploys itself mid-run
+        Lost the shoreside HEARTBEAT for 15 s -> pDeadManPost posts
+        DEPLOY=false on purpose. Restore the link; the laptop re-DEPLOYs
+        (which re-locks the roster for whoever is connected then).
+
+ Boat is on the viewer but will not drive
+        pBB_DGPS_EKF publishes MOOS_MANUAL_OVERRIDE=true when GPS goes stale
+        or invalid, and suppresses NAV_*. Check GPS/pBB_Health before
+        blaming the helm.
+
+ Position on the viewer is frozen or obviously wrong
+        No GNSS_STATE arriving from the front seat. Front-seat Pi down or a
+        front-seat<->radio cable unplugged. Ping the front seat (2c).
+
+ Boat is on the viewer but not in the ring after DEPLOY
+        It connected after DEPLOY, or was quiet >5 s at that moment.
+        -> laptop: RETURN, confirm it is live, DEPLOY again.
+
+ "Dynamic roster: ... capping at 4"
+        5 boats connected; only 4 lock in. Power one down and re-DEPLOY.
+
+
+===========================================================================
+ 6.  SHUTDOWN + LOGS  (per boat)
+===========================================================================
+   Ctrl-C in the boat's launch terminal -> halts that boat's apps.
+   Logs land in  ~/moos-ivp-xeqtor/missions/skara_N_boats/LOG_<NAME>_*
+   on that Pablo.
+
+   >> COPY THE LOGS OFF BEFORE ANYONE RUNS ./clean.sh -- clean.sh deletes
+      LOG_*, XLOG_*, targ_* and the generated v*.txt files.
+
+      From the laptop:  scp -r <user>@10.31.1.100:~/moos-ivp-xeqtor/missions/skara_N_boats/LOG_ASHA_* .
+
+
+===========================================================================
+ QUICK CARD  (per boat, in order)
+===========================================================================
+   ssh <user>@10.3N.1.100   ->   tmux new -s boat
+
+   source ~/.bashrc
+   cd ~/moos-ivp-xeqtor && git pull && ./build.sh
+   cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+   ./init_field.sh
+   get_robot_info_greece.sh --name     # asha|bama|chip|flex|ewan
+   get_robot_info_greece.sh --TYPE     # BBOAT
+   ping -c3 $(get_robot_info_greece.sh --fseat)
+   ping -c3 <LAPTOP_IP>
+   ./launch_vehicle.sh --shore=<LAPTOP_IP> -v 1     # WARP 1. No other flags.
+
+   Then: confirm the boat is on the shoreside viewer BEFORE they press DEPLOY.
+===========================================================================

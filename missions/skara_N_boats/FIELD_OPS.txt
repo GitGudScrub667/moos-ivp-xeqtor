@@ -4,6 +4,8 @@
  Bring ANY 1-4 of them; the shoreside LOCKS IN whoever is connected on DEPLOY
  and spaces them EVENLY around the ring (N=1 solo / 2 = 180 / 3 = 120 / 4 = 90).
  Mission: ~/moos-ivp-xeqtor/missions/skara_N_boats   (git main)
+ BOAT-SIDE (each Pablo) HAS ITS OWN FULL RUNBOOK: BOAT_OPS.txt in this dir.
+ Sections 2 + 3 below are the short form of it.
  Logic/behaviors identical to the water-tested pireas_N_boat; only the LOCATION
  + op-area + formation geometry differ (skara chart + datum).
 ===========================================================================
@@ -16,7 +18,7 @@
  #########################################################################
 
   RULE #1:  REAL BOATS ALWAYS RUN AT WARP 1.  Never time-warp real boats.
-  RULE #2:  The 8 m centre no-go (parked show-vessel) and the loiter radii are
+  RULE #2:  The 11 m centre no-go (parked show-vessel) and the loiter radii are
             SOFT IvP preferences, NOT hard limits. Keep an INDEPENDENT abort.
   RULE #3:  The active set is SNAPSHOTTED ON DEPLOY. Have every boat you want
             in the formation connected + on the viewer BEFORE you press DEPLOY.
@@ -26,7 +28,7 @@
   Roles:
     * SHORESIDE  = laptop. MOOSDB + pMarineViewer + pArrivalSync + heartbeat.
     * EACH PABLO = one BlueBoat backseat computer. Pool: asha bama chip flex ewan.
-  Ring: center (-144,-43), R=21.5.  Slots are NOT fixed per boat anymore -- they
+  Ring: center (55,-50), R=33.  Slots are NOT fixed per boat anymore -- they
   are computed live at DEPLOY (even 360/N) and pushed to each boat.  Max 4 boats
   lock in at once (a 5th connected boat is left out with a "capping" note).
 
@@ -88,8 +90,9 @@
          >> Whoever is NOT on the viewer at DEPLOY will not be in the ring. <<
    [ ] Each boat's plotted position matches where it physically floats.
    [ ] uProcessWatch all-present per boat; helm in DRIVE.
-   [ ] Boats near the home cluster (~ -68,-41), bows pointed W toward the ring.
-         homes:  asha(-63,-37) bama(-73,-37) chip(-73,-45) flex(-63,-45) ewan(-68,-41)
+   [ ] Boats near the home cluster off the SOUTH beach (~ 57,-153), bows
+       pointed NORTH toward the ring.
+         homes:  asha(47,-150) bama(57,-150) chip(67,-150) flex(52,-158) ewan(62,-158)
    Dead-man: shore beats HEARTBEAT 1/s; a boat un-deploys if the link drops 15 s.
 
 
@@ -102,7 +105,7 @@
    DISPERSE   -> boats spread outward to N of the square's 4 corners (nearest,
                  non-crossing).
    ASSEMBLE   -> boats re-enter the ring forward and resume the even orbit.
-   MIO        -> the closest boat leaves to guard the r=7 station at (-90.43,-52.25);
+   MIO        -> the closest boat leaves to guard the r=7.7 station at (25,-100);
                  the REMAINING boats keep orbiting and re-even among themselves.
                  (With 1 boat total, that lone boat goes to the station solo.)
    END-MIO    -> that boat returns; all re-form evenly (360/N).
