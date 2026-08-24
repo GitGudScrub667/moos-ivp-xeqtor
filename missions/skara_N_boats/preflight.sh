@@ -109,7 +109,18 @@ done
 #------------------------------------------------------------
 head_ "3. MISSION FIELD FILES"
 #------------------------------------------------------------
-cd "$(dirname "$0")" || exit 1
+# Work against the real mission dir. This script is also kept as a loose copy
+# on the Desktop, so if it is not sitting in the mission itself, go find it.
+MDIR="$(cd "$(dirname "$0")" && pwd)"
+if [ ! -f "$MDIR/launch_vehicle.sh" ]; then
+    MDIR="$HOME/moos-ivp-xeqtor/missions/skara_N_boats"
+    echo "  info    run from outside the mission -- checking $MDIR"
+fi
+if [ ! -d "$MDIR" ]; then
+    flag "mission dir not found: $MDIR"
+    MDIR="."
+fi
+cd "$MDIR" || exit 1
 MISSING=""
 for f in vnames.txt vpositions.txt vcolors.txt vslotpos.txt; do
     [ -f "$f" ] || MISSING="$MISSING $f"
