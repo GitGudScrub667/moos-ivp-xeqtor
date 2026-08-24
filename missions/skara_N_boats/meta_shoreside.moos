@@ -280,11 +280,12 @@ ProcessConfig = pMarineViewer
 
   tiff_file            = skaramangas.tif
 
-  // TODO(skara geometry): pan/zoom are skara3_2's defaults as a starting point;
-  // retune once the show formation is placed so it sits centred in the view.
-  set_pan_x            = 0
-  set_pan_y            = 0
-  zoom                 = 0.85
+  // View framing, set by eye in the live viewer (2026-08-24) and baked here so
+  // every launch opens on the show area. pan is in SCREEN PIXELS, so these suit
+  // this laptop's maximised window (1366x768); re-eyeball on a different display.
+  set_pan_x            = 80
+  set_pan_y            = 100
+  zoom                 = 1.07
   vehicles_shape_scale = 1.5
   vehicles_name_mode   = names
 

@@ -15,8 +15,8 @@
 - [x] Orientation unchanged (`slot_base_deg = 0`).
 
 ## REMAINING
-- [ ] **pMarineViewer `set_pan_x/y/zoom`** — still skara3_2 defaults (0,0 / 0.85, shows the whole cove). Fine-tune in the GUI to centre the formation.
+- [x] **pMarineViewer `set_pan_x/y/zoom`** — **set by the user in the live GUI on 2026-08-24 and baked: `80 / 100 / 1.07`** (was 0,0 / 0.85). pan is in screen pixels, so it is tied to this laptop's maximised 1366x768 window; re-eyeball on a different display. To re-capture at any time: pan/zoom in the viewer, then read `window pan_x / pan_y / zoom` from the pMarineViewer appcast (or `grep 'window pan_x' XLOG_SHORESIDE*/*.alog`).
 - [ ] **Obstacles** — none placed (buoys were dropped). Add BHV_AvoidObstacleV24 blocks only if the show area has real fixed hazards.
 - [ ] **Sim-validate** the full mission (deploy / encircle / DISPERSE / MIO / RETURN), then **water-validate** at Skaramangas.
 
-`grep -rn "TODO(skara"` for the two remaining in-source notes (pan/zoom, optional obstacles).
+`grep -rn "TODO(skara"` for the one remaining in-source note (optional obstacles).

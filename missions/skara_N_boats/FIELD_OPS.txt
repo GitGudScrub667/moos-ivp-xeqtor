@@ -11,8 +11,8 @@
  #########################################################################
  ##  GEOMETRY PLACED (ring 55,-50 r33 / MIO 25,-100 / op-area drawn),    ##
  ##  but NOT YET VALIDATED. Sim-check the full mission, then water-test  ##
- ##  at Skaramangas, before running it for the show. Still to fine-tune: ##
- ##  pMarineViewer pan/zoom (GUI). See GEOMETRY_TODO.md.                 ##
+ ##  at Skaramangas, before running it for the show. Viewer pan/zoom is  ##
+ ##  now baked (80 / 100 / 1.07). See GEOMETRY_TODO.md.                  ##
  #########################################################################
 
   RULE #1:  REAL BOATS ALWAYS RUN AT WARP 1.  Never time-warp real boats.
