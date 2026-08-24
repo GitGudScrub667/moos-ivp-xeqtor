@@ -55,8 +55,10 @@
     on the 10.34 Pablo gives "not listed in vnames.txt. Exit Code 5". That is
     correct behaviour, not a bug. Use one of the five.
 
- >> It MUST be the _greece script. The generic get_robot_info.sh answers with
-    yip/zoe/xai and will also give you Exit Code 5. Check which one you have:
+ >> This mission calls get_robot_info_greece.sh BY NAME (not the generic
+    get_robot_info.sh, which answers yip/zoe/xai and is what the older
+    rescue_pireas-derived missions trip over). So all you need is that the
+    _greece one is installed:
 
         which get_robot_info_greece.sh        # must print a path
 
@@ -67,7 +69,19 @@
 ===========================================================================
  2.  PREFLIGHT ON EACH PABLO  (do this on every boat you are bringing)
 ===========================================================================
- --- 2a. Environment + code (once per boat per day) ---
+ --- 2a. ONE COMMAND THAT CHECKS ALL OF IT ---
+
+   cd ~/moos-ivp-xeqtor/missions/skara_N_boats
+   ./preflight.sh --shore=<LAPTOP_IP>
+
+   Read-only: it changes nothing, builds nothing, pulls nothing, launches
+   nothing, and needs NO internet. Works at the dock. It checks the repo pins,
+   the apps on PATH, the mission field files, this boat's identity, and the
+   front-seat + shoreside links, then prints either PREFLIGHT CLEAN or a list
+   of CHECK>> lines. Everything it tests is spelled out below in 2b-2d, so you
+   can still do it by hand if the script is unavailable.
+
+ --- 2b. Environment + code (once per boat per day) ---
 
    source ~/.bashrc
    which nsplug uMAC pHelmIvP get_robot_info_greece.sh
@@ -82,10 +96,36 @@
                                   # itself uses only STOCK behaviours, so no
                                   # custom behaviour library is needed here.
 
+   >> git pull needs internet. Do 2b AT THE BENCH, before you go to the
+      water. Everything else in this runbook works offline.
+
+   >> ONLY moos-ivp-xeqtor is pulled. That is deliberate:
+
+        ~/moos-ivp        (Mike's core)  PINNED. Branch water-tested-5f591ca6e
+                          @ 5f591ca6e, no upstream -- `git pull` there will
+                          refuse, and that is the safety catch working.
+        ~/moos-ivp-greece (pBB_* apps)   PINNED @ 6f51ca1 by convention only:
+                          it IS on main tracking origin, so a stray pull there
+                          WOULD move the backseat apps. Do not pull it.
+        ~/moos-ivp-xeqtor (the mission)  PULL THIS ONE. Every machine, laptop
+                          included, must end up on the same sha.
+
+      Core and greece are pinned to the build that was water-validated at the
+      show site. Pulling them puts the boats on untested code, and can leave a
+      boat running different helm/behaviour code than the shoreside.
+
+   >> IF preflight.sh FLAGS A PIN MISMATCH AT THE DOCK:
+        - xeqtor mismatch  -> fixable: git pull (needs internet), relaunch.
+        - core or greece mismatch -> do NOT try to fix it at the water. A core
+          rebuild is long and can leave the boat unusable. Prefer a boat whose
+          pins match. If you must run the odd one out, run it and watch it, and
+          write the sha down -- if something behaves oddly later, that is your
+          first suspect.
+
    >> Core ~/moos-ivp must stay STOCK. Do not apply any patch to it. If an
       old note tells you to patch a viewer/ContactLedger fix: IGNORE IT.
 
- --- 2b. Mission field files (REQUIRED on every boot / fresh clone) ---
+ --- 2c. Mission field files (REQUIRED on every boot / fresh clone) ---
 
    cd ~/moos-ivp-xeqtor/missions/skara_N_boats
    ./init_field.sh
@@ -93,7 +133,7 @@
         # These are generated and deliberately NOT in git, so a fresh clone
         # does not have them. Skipping this => "field files missing. Exit 4".
 
- --- 2c. Identity + links ---
+ --- 2d. Identity + links ---
 
    get_robot_info_greece.sh --name     # -> asha|bama|chip|flex|ewan  (exact)
    get_robot_info_greece.sh --TYPE     # -> BBOAT     (uppercase TYPE!)
@@ -181,8 +221,12 @@
 
  "'<name>' is not listed in vnames.txt. Exit Code 5"
         The detected name is not one of asha/bama/chip/flex/ewan.
-        -> classic cause: it is "dale" (10.34), or you have the generic
-           get_robot_info.sh on PATH answering yip/zoe/xai.
+        -> classic cause: it is "dale" (10.34), which is a real boat but is
+           not in this mission's pool.
+        -> or vnames.txt is missing/edited: re-run ./init_field.sh.
+        (This mission calls get_robot_info_greece.sh BY NAME, so a generic
+         get_robot_info.sh sitting on PATH cannot cause this -- that trap
+         belongs to the older rescue_pireas-derived missions.)
 
  nsplug stops and asks whether to continue
         An undefined macro in the meta files. Answer NO / Ctrl-C. Do not
@@ -235,14 +279,14 @@
 ===========================================================================
    ssh <user>@10.3N.1.100   ->   tmux new -s boat
 
+   AT THE BENCH (needs internet):
    source ~/.bashrc
-   cd ~/moos-ivp-xeqtor && git pull && ./build.sh
+   cd ~/moos-ivp-xeqtor && git pull && ./build.sh    # xeqtor ONLY. Never pull
+                                                     # core moos-ivp or greece.
+   AT THE DOCK (offline is fine):
    cd ~/moos-ivp-xeqtor/missions/skara_N_boats
    ./init_field.sh
-   get_robot_info_greece.sh --name     # asha|bama|chip|flex|ewan
-   get_robot_info_greece.sh --TYPE     # BBOAT
-   ping -c3 $(get_robot_info_greece.sh --fseat)
-   ping -c3 <LAPTOP_IP>
+   ./preflight.sh --shore=<LAPTOP_IP>               # want: PREFLIGHT CLEAN
    ./launch_vehicle.sh --shore=<LAPTOP_IP> -v 1     # WARP 1. No other flags.
 
    Then: confirm the boat is on the shoreside viewer BEFORE they press DEPLOY.
