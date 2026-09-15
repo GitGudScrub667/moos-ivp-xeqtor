@@ -222,4 +222,5 @@ ProcessConfig=pShare
   output = src_name=DEPLOY, dest_name=DEPLOY, route=localhost:9201
   output = src_name=RETURN, dest_name=RETURN, route=localhost:9201
   output = src_name=MOOS_MANUAL_OVERRIDE, dest_name=MOOS_MANUAL_OVERRIDE, route=localhost:9201
+  output = src_name=WPT_UPDATE, dest_name=WPT_UPDATE, route=localhost:9201
 }
