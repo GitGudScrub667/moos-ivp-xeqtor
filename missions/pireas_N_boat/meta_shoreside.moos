@@ -226,15 +226,13 @@ ProcessConfig = pMarineViewer
   vehicles_shape_scale = 1.5
   vehicles_name_mode   = names
 
-  // Icon smoothing. The field radio delivers NODE_REPORTs in ~0.5 s bursts,
-  // often newest-first, so raw draws jitter (icon lurches back and forth). The
-  // patched ContactLedger now drops out-of-order reports (keeps the newest),
-  // and this glides the icon forward at its course-over-ground between reports
-  // so motion looks as smooth as the real boat. decay=2:5 = if comms actually
-  // drop, coast ~2 s then ease to a stop by 5 s (never triggered at 0.5 s
-  // cadence). mode=cog tracks the observed path; use mode=hdg to steer by
-  // reported heading instead. Requires the ledger out-of-order guard to be safe.
-  extrap_policy        = mode=cog, decay=2:5
+  // NOTE: the live-viewer icon jitter on the greece field radio is still an
+  // OPEN issue. A previous attempt -- a core ContactLedger out-of-order guard
+  // patched into ~/moos-ivp, paired with `extrap_policy = mode=cog, decay=2:5`
+  // here -- did NOT fix it, and has been fully removed; we do not modify core
+  // moos-ivp. Do not re-add extrap_policy on its own: it glides the icon
+  // forward between reports, i.e. it smooths from positions that can still
+  // jump backward without the guard. Viewer runs stock.
 
   hash_delta           = 50
   hash_shade           = 0.22

@@ -63,6 +63,16 @@ class ArrivalSync : public AppCastingMOOSApp
                      std::vector<std::string>& boats, std::vector<unsigned int>& tidx,
                      double turn_penalty = 0.0);
    std::string closestFreeBoat(double tx, double ty) const;
+   // Center-detour (opt-in). True if the straight run from (sx,sy) to (tx,ty)
+   // would pass within m_detour_radius of the ring centre; then (px,py) is
+   // filled with the arc of waypoints that routes around it. See the .cpp.
+   bool centerDetourPath(double sx, double sy, double tx, double ty,
+                         std::vector<double>& px,
+                         std::vector<double>& py) const;
+   // Build the "point=" / "points=" spec for a transit to (tx,ty), inserting a
+   // center-detour waypoint first when one is needed.
+   std::string transitSpec(const std::string& v, double tx, double ty) const;
+   void postReturnPaths();       // on RETURN: push each boat's route home
    void assignInvestigation();
    std::string loopSpec(double tx, double ty) const;   // "points=..." around target
    void handleRejoin();          // bring the investigator radially back to the ring
@@ -163,6 +173,41 @@ class ArrivalSync : public AppCastingMOOSApp
    std::string m_mio_cmd_var;   // subscribe: MIO_CMD (from the buttons)
    std::string m_mio_flag_var;  // post: MIO_<VNAME> = true/false
    std::string m_mio_update_var;// post: MIO_UPDATE_<VNAME> = polygon=...
+
+ private: // Configuration (center detour, opt-in)
+   // The boats surround the ring centre but all launch from one shore, so any
+   // boat slotted on the far side would otherwise transit straight across the
+   // middle -- where the show vessel is parked. When enabled, transits that
+   // would cut through a keep-out disc around the ring centre get one extra
+   // waypoint that routes them around it instead.
+   bool   m_enable_center_detour;
+   double m_detour_max_leg_deg; // the detour arc is split so no single leg
+                                // spans more than this many degrees: a long
+                                // straight chord across the keep-out circle
+                                // sags back inside it (a 180 deg leg would cut
+                                // through the centre), so the arc is walked in
+                                // short steps instead.
+   double m_detour_radius;      // radius of the keep-out disc around the ring
+                                // centre. Must be GREATER than the show_vessel
+                                // avoidance envelope (so the detour clears it
+                                // outright) and LESS than m_circle_rad (so the
+                                // detour stays inside the formation).
+   std::string m_return_update_var;             // post: RETURN_UPDATE_<VNAME>
+   std::map<std::string, double> m_home_x;      // vname -> home/return x
+   std::map<std::string, double> m_home_y;
+   std::map<std::string, bool>   m_detoured;    // vname -> last transit detoured
+                                                // (appcast reporting only)
+   // Live run-in detour state. The arrival-sync speeds are derived from each
+   // boat's REMAINING PATH LENGTH, so while a detour waypoint is still ahead
+   // of a boat its distance must be measured via that waypoint, not straight
+   // to the slot -- otherwise the detoured boat is given the speed for the
+   // short path, flies the long one, and lands late.
+   std::map<std::string, std::vector<double> > m_path_x;  // detour waypoints
+   std::map<std::string, std::vector<double> > m_path_y;  // (final slot excluded)
+   std::map<std::string, unsigned int>         m_path_idx; // next one to reach
+   // Remaining travel for boat v: via any detour waypoints still ahead of it,
+   // then on to (tx,ty). This is what the arrival sync equalises on.
+   double remainingPath(const std::string& v, double tx, double ty);
 
  private: // Configuration (dynamic roster, opt-in)
    bool   m_enable_dynamic_roster;  // false => roster is the fixed 'vehicle=' list

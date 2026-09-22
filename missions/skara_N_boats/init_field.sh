@@ -11,19 +11,21 @@
 #
 #  One value per line, one line per boat, same order:
 #      asha  bama  chip  flex  ewan
-#  Ring: center (85,-50), radius 33, in the central Skaramangas basin.
+#  Ring: center (55,-50), radius 33, in the central Skaramangas basin.
 #------------------------------------------------------------
 
 # Home / start + return positions, one per POOL boat, looked up BY NAME by
 # launch_vehicle.sh (RETURN goes here; a boat always returns to its own home,
 # independent of how many boats deployed).
 # Skaramangas: a tight cluster off the SOUTH beach, ~100 m S of the ring, each
-# headed NNE toward the ring center (85,-50) for a clean deploy run-in.
-echo "x=47,y=-150,heading=21" >  vpositions.txt   # asha
-echo "x=57,y=-150,heading=16" >> vpositions.txt   # bama
-echo "x=67,y=-150,heading=10" >> vpositions.txt   # chip
-echo "x=52,y=-158,heading=17" >> vpositions.txt   # flex
-echo "x=62,y=-158,heading=12" >> vpositions.txt   # ewan
+# headed just about due N at the ring center (55,-50) for a clean deploy run-in.
+# Headings are the exact bearing home -> ring centre (MOOS: 0=N, CW), so they
+# MUST be recomputed whenever the ring centre or a home position moves.
+echo "x=47,y=-150,heading=5"   >  vpositions.txt   # asha  (bearing 4.57)
+echo "x=57,y=-150,heading=359" >> vpositions.txt   # bama  (bearing 358.85)
+echo "x=67,y=-150,heading=353" >> vpositions.txt   # chip  (bearing 353.16)
+echo "x=52,y=-158,heading=2"   >> vpositions.txt   # flex  (bearing 1.59)
+echo "x=62,y=-158,heading=356" >> vpositions.txt   # ewan  (bearing 356.29)
 
 # Placeholder ring slot only (East point). The REAL slot for each boat is
 # computed + pushed live by pArrivalSync on DEPLOY (even 360/N spacing over
