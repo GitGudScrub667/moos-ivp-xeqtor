@@ -97,7 +97,7 @@ ProcessConfig = pHelmIvP
   AppTick    = 4
   CommsTick  = 4
 
-  behaviors  = bravo.bhv
+  behaviors  = targ_bravo.bhv
   domain     = course:0:359:360
   domain     = speed:0:4:41
   domain     = depth:0:100:101
@@ -222,7 +222,7 @@ ProcessConfig = pOdometry
   AppTick   = 4
   CommsTick = 4
 
-  // Accumulate ODOMETRY_DIST_AT_DEPTH only while NAV_DEPTH > 25m.
+  // Accumulate ODOMETRY_DIST_AT_DEPTH only while NAV_DEPTH > $(DEPTH_THRESH)m.
   // (West loiter @30m counts; east loiter @10m does not.)
-  depth_thresh = 25
+  depth_thresh = $(DEPTH_THRESH)
 }
