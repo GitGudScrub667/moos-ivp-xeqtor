@@ -30,7 +30,17 @@ set MODE = RETURNING {
   RETURN = true
 }
 
-// [ΣΗΜ Ex4] FLAT modes (o helm den ypostirizei grandchild modes -> ola paidia tou ACTIVE).
+// [ΣΗΜ Ex4] FLAT modes - epilogi, OXI periorismos tou helm.
+//   O helm YPOSTIRIZEI grandchild modes: to prefix ftiaxnetai me ':' kai den yparxei
+//   orio bathous (ModeEntry.cpp:117-120 pairnei olo to dexi meros, ModeSet.cpp:66-69
+//   kanei prefix+":"+value). Ara "MODE = ACTIVE:REFUELING" doulevei kanonika.
+//   Protimisame flat epeidi:
+//     (a) kamia apostoli se moos-ivp / -2680 / -greece den paei pio bathia apo 2 epipeda,
+//     (b) i SEIRA DILOSIS ginetai krisimi: to ModeSet::evaluate() einai ENA perasma me ti
+//         seira tou arxeiou, ara to paidi PREPEI na dilothei META ton gonea tou - alliws
+//         den anavei pote, xwris kanena warning,
+//     (c) to paidi prepei na onomazei oli ti diadromi tou gonea (ACTIVE:REFUELING),
+//         oxi mono to fyllo (REFUELING).
 //   To "REFUELING" to spame se dyo flat katastaseis pou ksexwrizoun me REFUEL_STATION:
 set MODE = REFUEL-TRANSIT {
   MODE = ACTIVE
