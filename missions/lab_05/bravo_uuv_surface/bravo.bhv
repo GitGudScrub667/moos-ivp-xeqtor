@@ -115,6 +115,13 @@ Behavior = BHV_Timer
   condition   = DEPLOY = true
   condition   = RETURN = false
   condition   = SURFACE = true
+  // [FLAG-05] Lab 4 sec 6.4 asks for a timer that "begins when the vehicle is
+  //   at the surface". SURFACE=true alone fires when the ASCENT starts, so the
+  //   60s included the climb (~45s actually spent on top). This condition holds
+  //   the timer idle until we are really up. Safe with duration_idle_decay=false:
+  //   idle time is subtracted (IvPBehavior.cpp:1313-1314), so even if depth bobs
+  //   across 1m the behavior still accumulates a full 60s AT the surface.
+  condition   = NAV_DEPTH < 1
 
   duration            = 60
   duration_idle_decay = false
