@@ -163,6 +163,40 @@ Behavior = BHV_ConstantSpeed
 }
 
 //----------------------------------------------
+// [FLAG-07] Supplies the 'course' decision variable while surfaced.
+//   Without this NOTHING produces a course function, the IvP solver cannot
+//   resolve the helm domain (course:0:359:360 + speed + depth), and the helm
+//   goes to all-stop with IVPHELM_ALLSTOP=MissingDecVars:course. Measured in
+//   MOOSLog_22_9_2026: DESIRED_HEADING fell from 3.99/s submerged to 0.02/s
+//   while surfaced, DESIRED_DEPTH and DESIRED_SPEED stopped entirely, and
+//   pMarinePIDV22 logged 15282 "Stale Des*" messages. Consequence: the two
+//   behaviors below never actually executed -- the vehicle stopped through
+//   drag and rose through buoyancy alone, not because we commanded it.
+//
+//   The heading value is arbitrary: we are stopped, so it does not matter,
+//   and at zero speed there is no rudder authority anyway. Expect a mild turn
+//   during the few seconds of deceleration, while the vehicle still has way on.
+//
+//   Two gotchas in BHV_ConstantHeading, both load-bearing:
+//     - duration defaults to 0, not -1, so WITHOUT "no-time-limit" below the
+//       behavior times out on its first iteration and produces nothing
+//       (BHV_ConstantHeading.cpp constructor, and its own comment says so).
+//     - do NOT set complete_thresh: it defaults to -1 so the behavior never
+//       self-completes; any non-negative value makes it setComplete() and
+//       return no function once the heading matches (same file, onRunState).
+Behavior = BHV_ConstantHeading
+{
+  name       = const_hdg_surface
+  pwt        = 10
+  duration   = no-time-limit
+  condition  = DEPLOY = true
+  condition  = RETURN = false
+  condition  = SURFACE = true
+
+  heading = 0
+}
+
+//----------------------------------------------
 // Return to launch (0,0) only when the user hits the RETURN button.
 Behavior = BHV_Waypoint
 {
