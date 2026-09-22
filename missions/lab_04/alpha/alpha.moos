@@ -180,11 +180,29 @@ ProcessConfig = pMarineViewer
      left_context[view_point]  = VIEW_POINT = x=$(XPOS),y=$(YPOS),label=hello
      left_context[view_poly]  = VIEW_POLYGON = format=radial,x=$(XPOS),y=$(YPOS),radius=10, pts=8, edge_size=1,label=mypoly
      
+  // Assignment 2 -- set the return point AND go back immediately.
+  //   RETURN=true satisfies waypt_return's condition (alpha.bhv:61) right away,
+  //   and the last two lines take the helm out of PARK so the click also works
+  //   on a vehicle that was never deployed.
      left_context[return_new] = RETURN_UPDATE = points = $[XPOS],$[YPOS]
      left_context[return_new] = VIEW_POINT = x=$(XPOS),y=$(YPOS),label = NewPort
      left_context[return_new] = RETURN=true
      left_context[return_new] = MOOS_MANUAL_OVERRIDE=false
      left_context[return_new] = DEPLOY=true
+
+  // Assignment 1 -- set the return point NOW, return LATER.
+  //   Same first poke, deliberately WITHOUT RETURN=true, so the survey is not
+  //   interrupted: waypt_return stays idle and goes to the new point only when
+  //   RETURN is raised later (waypt_survey's endflag, or the RETURN button).
+  //   This works because the helm consumes `updates` for EVERY behavior each
+  //   iteration regardless of run state -- checkUpdates() is called at
+  //   BehaviorSet.cpp:703, before isRunnable() decides idle/running at :722.
+  //   Label is "return_point" because the lab sheet asks for exactly that:
+  //   "posting of a point ... with the label "return_point" immediately upon
+  //   a user click" (Lab 4 sec 5.4). Do not rename it to match the block above.
+  //   Switch between the two from the pMarineViewer Mouse-Context menu.
+     left_context[return_point] = RETURN_UPDATE = points = $[XPOS],$[YPOS]
+     left_context[return_point] = VIEW_POINT = x=$(XPOS),y=$(YPOS),label = return_point
 
   right_context[deploy] = DEPLOY=true
   right_context[deploy] = MOOS_MANUAL_OVERRIDE=false
